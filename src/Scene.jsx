@@ -5,6 +5,36 @@ import * as THREE from 'three';
 import { STLExporter } from 'three/examples/jsm/exporters/STLExporter.js';
 import * as BufferGeometryUtils from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 
+const getShapeRadius = (theta, type, radius, width, depth, cr) => {
+   if (type === 'cylinder') return radius;
+   let th = theta % (2 * Math.PI);
+   if (th < 0) th += 2 * Math.PI;
+   
+   const vx = Math.abs(Math.sin(th));
+   const vy = Math.abs(Math.cos(th));
+   
+   const cx = width / 2 - cr;
+   const cy = depth / 2 - cr;
+   
+   if (vx === 0) return depth / 2;
+   if (vy === 0) return width / 2;
+   
+   const r_right = (width / 2) / vx;
+   if (r_right * vy <= cy) return r_right;
+   
+   const r_bottom = (depth / 2) / vy;
+   if (r_bottom * vx <= cx) return r_bottom;
+   
+   const b = -2 * (vx * cx + vy * cy);
+   const c = cx * cx + cy * cy - cr * cr;
+   const disc = b * b - 4 * c;
+   
+   if (disc >= 0) {
+      return (-b + Math.sqrt(disc)) / 2;
+   }
+   return radius;
+};
+
 const getSubpixelValues = (img, x, y) => {
   let x0 = Math.floor(x);
   let y0 = Math.floor(y);
@@ -57,7 +87,7 @@ const generateTestTexture = () => {
 };
 
 export default function Scene({ 
-  radius, height, thickness, distance, bulbRadius, uploadedImage,
+  radius, shapeType, boxWidth, boxDepth, boxCornerRadius, height, thickness, distance, bulbRadius, uploadedImage,
   imgOffsetX, imgOffsetY, imgScaleX, imgScaleY, imgRotation,
   imgFlipX, imgFlipY,
   invertShadow, supportType, supportThickness, supportSpacing, 
@@ -75,7 +105,7 @@ export default function Scene({
   const alphaDataRef = useRef(null);
 
   const paramsRef = useRef({
-    radius, height, thickness, distance,
+    radius, shapeType, boxWidth, boxDepth, boxCornerRadius, height, thickness, distance,
     imgOffsetX, imgOffsetY, imgScaleX, imgScaleY, imgRotation,
     imgFlipX, imgFlipY, invertShadow,
     supportType, supportThickness, supportSpacing
@@ -83,11 +113,11 @@ export default function Scene({
 
   useEffect(() => {
     paramsRef.current = { 
-      radius, height, thickness, distance, imgOffsetX, imgOffsetY, 
+      radius, shapeType, boxWidth, boxDepth, boxCornerRadius, height, thickness, distance, imgOffsetX, imgOffsetY, 
       imgScaleX, imgScaleY, imgRotation, imgFlipX, imgFlipY, invertShadow,
       supportType, supportThickness, supportSpacing
     };
-  }, [radius, height, thickness, distance, imgOffsetX, imgOffsetY, imgScaleX, imgScaleY, imgRotation, imgFlipX, imgFlipY, invertShadow, supportType, supportThickness, supportSpacing]);
+  }, [radius, shapeType, boxWidth, boxDepth, boxCornerRadius, height, thickness, distance, imgOffsetX, imgOffsetY, imgScaleX, imgScaleY, imgRotation, imgFlipX, imgFlipY, invertShadow, supportType, supportThickness, supportSpacing]);
 
   // Handle Reset 
   useEffect(() => {
@@ -156,8 +186,9 @@ export default function Scene({
         const normalizedU = u / W;
         const theta = normalizedU * 2 * Math.PI;
         
-        const P_x = p.radius * Math.sin(theta);
-        const P_y = -p.radius * Math.cos(theta);
+        const currentRadius = getShapeRadius(theta, p.shapeType, p.radius, p.boxWidth, p.boxDepth, p.boxCornerRadius);
+        const P_x = currentRadius * Math.sin(theta);
+        const P_y = -currentRadius * Math.cos(theta);
         const P_z = Z;
         
         let isHole = false;
@@ -190,7 +221,7 @@ export default function Scene({
         }
         
         if (isHole && p.supportType !== 'none') {
-           const arcLength = (u / W) * (2 * Math.PI * p.radius);
+           const arcLength = (u / W) * (2 * Math.PI * currentRadius);
            const zPos = (1.0 - (v / H)) * p.height; 
            const spacing = p.supportSpacing / 10;
            const thickness = p.supportThickness / 10;
@@ -274,17 +305,17 @@ export default function Scene({
         const dist2 = X*X + Y*Y;
         if (dist2 === 0) continue;
         
-        const k = p.radius / Math.sqrt(dist2);
+        let theta = Math.atan2(X / Math.sqrt(dist2), -Y / Math.sqrt(dist2));
+        if (theta < 0) theta += 2 * Math.PI;
+        
+        const currentRadius = getShapeRadius(theta, p.shapeType, p.radius, p.boxWidth, p.boxDepth, p.boxCornerRadius);
+        const k = currentRadius / Math.sqrt(dist2);
         const Z_cyl = k * p.distance;
         
         let isSolid = false;
         if (Z_cyl >= p.distance - p.height && Z_cyl <= p.distance) {
            const v_uv = H * (p.distance - Z_cyl) / p.height;
            if (v_uv >= 0 && v_uv < H) {
-              const X_cyl = k * X;
-              const Y_cyl = k * Y;
-              let theta = Math.atan2(X_cyl / p.radius, -Y_cyl / p.radius);
-              if (theta < 0) theta += 2 * Math.PI;
               const u_uv = (theta / (2 * Math.PI)) * W;
               
               if (u_uv >= 0 && u_uv < W) {
@@ -376,8 +407,9 @@ export default function Scene({
           for (let u = 0; u < W; u++) {
             const normalizedU = u / W;
             const theta = normalizedU * 2 * Math.PI;
-            const P_x = p.radius * Math.sin(theta);
-            const P_y = -p.radius * Math.cos(theta);
+            const currentRadius = getShapeRadius(theta, p.shapeType, p.radius, p.boxWidth, p.boxDepth, p.boxCornerRadius);
+            const P_x = currentRadius * Math.sin(theta);
+            const P_y = -currentRadius * Math.cos(theta);
             const P_z = Z;
             
             let isHole = false;
@@ -406,7 +438,7 @@ export default function Scene({
             }
             
             if (isHole && p.supportType !== 'none') {
-               const arcLength = (u / W) * (2 * Math.PI * p.radius);
+               const arcLength = (u / W) * (2 * Math.PI * currentRadius);
                const zPos = (1.0 - (v / H)) * p.height; 
                const spacing = p.supportSpacing / 10;
                const thickness = p.supportThickness / 10;
@@ -452,16 +484,20 @@ export default function Scene({
            vertices.push(...p1, ...p3, ...p4);
         };
 
-        const getPos = (th, r, z_out) => {
+        const getPosInner = (th, z_out) => {
+           let r = getShapeRadius(th, p.shapeType, p.radius - p.thickness, p.boxWidth - 2*p.thickness, p.boxDepth - 2*p.thickness, Math.max(0, p.boxCornerRadius - p.thickness));
+           let R_out = getShapeRadius(th, p.shapeType, p.radius, p.boxWidth, p.boxDepth, p.boxCornerRadius);
            let z = z_out;
-           if (r < p.radius) {
-              // Ensure the absolute top and bottom base-caps remain flat
-              const isBoundary = Math.abs(z_out - (p.distance)) < 0.01 || Math.abs(z_out - (p.distance - p.height)) < 0.01;
-              if (!isBoundary) {
-                  z = z_out * (r / p.radius);
-              }
+           const isBoundary = Math.abs(z_out - (p.distance)) < 0.01 || Math.abs(z_out - (p.distance - p.height)) < 0.01;
+           if (!isBoundary) {
+               z = z_out * (r / R_out);
            }
            return [r * Math.sin(th), -r * Math.cos(th), z];
+        };
+
+        const getPosOuter = (th, z_out) => {
+           let r = getShapeRadius(th, p.shapeType, p.radius, p.boxWidth, p.boxDepth, p.boxCornerRadius);
+           return [r * Math.sin(th), -r * Math.cos(th), z_out];
         };
         const isSolid = (u_idx, v_idx) => {
            if (v_idx < 0 || v_idx >= H) return false;
@@ -469,9 +505,6 @@ export default function Scene({
            if (wrapU < 0) wrapU += W;
            return grid[v_idx * W + wrapU] === 1;
         };
-
-        const rIn = p.radius - p.thickness;
-        const rOut = p.radius;
 
         for (let v = 0; v < H; v++) {
            const v1 = 1.0 - (v / H);
@@ -487,57 +520,57 @@ export default function Scene({
 
               // Outer Face (+r)
               pushQuad(
-                 getPos(theta1, rOut, z_bot),
-                 getPos(theta1, rOut, z_top),
-                 getPos(theta2, rOut, z_top),
-                 getPos(theta2, rOut, z_bot)
+                 getPosOuter(theta1, z_bot),
+                 getPosOuter(theta1, z_top),
+                 getPosOuter(theta2, z_top),
+                 getPosOuter(theta2, z_bot)
               );
 
               // Inner Face (-r)
               pushQuad(
-                 getPos(theta2, rIn, z_bot),
-                 getPos(theta2, rIn, z_top),
-                 getPos(theta1, rIn, z_top),
-                 getPos(theta1, rIn, z_bot)
+                 getPosInner(theta2, z_bot),
+                 getPosInner(theta2, z_top),
+                 getPosInner(theta1, z_top),
+                 getPosInner(theta1, z_bot)
               );
 
               // Bottom face (+z) -> v decreased
               if (!isSolid(u, v - 1)) {
                  pushQuad(
-                    getPos(theta1, rOut, z_bot),
-                    getPos(theta2, rOut, z_bot),
-                    getPos(theta2, rIn, z_bot),
-                    getPos(theta1, rIn, z_bot)
+                    getPosOuter(theta1, z_bot),
+                    getPosOuter(theta2, z_bot),
+                    getPosInner(theta2, z_bot),
+                    getPosInner(theta1, z_bot)
                  );
               }
 
               // Top face (-z) -> v increased
               if (!isSolid(u, v + 1)) {
                  pushQuad(
-                    getPos(theta1, rIn, z_top),
-                    getPos(theta2, rIn, z_top),
-                    getPos(theta2, rOut, z_top),
-                    getPos(theta1, rOut, z_top)
+                    getPosInner(theta1, z_top),
+                    getPosInner(theta2, z_top),
+                    getPosOuter(theta2, z_top),
+                    getPosOuter(theta1, z_top)
                  );
               }
 
               // Left Face (-theta) -> u decreased
               if (!isSolid(u - 1, v)) {
                  pushQuad(
-                    getPos(theta1, rIn, z_top),
-                    getPos(theta1, rOut, z_top),
-                    getPos(theta1, rOut, z_bot),
-                    getPos(theta1, rIn, z_bot)
+                    getPosInner(theta1, z_top),
+                    getPosOuter(theta1, z_top),
+                    getPosOuter(theta1, z_bot),
+                    getPosInner(theta1, z_bot)
                  );
               }
 
               // Right Face (+theta) -> u increased
               if (!isSolid(u + 1, v)) {
                  pushQuad(
-                    getPos(theta2, rIn, z_bot),
-                    getPos(theta2, rOut, z_bot),
-                    getPos(theta2, rOut, z_top),
-                    getPos(theta2, rIn, z_top)
+                    getPosInner(theta2, z_bot),
+                    getPosOuter(theta2, z_bot),
+                    getPosOuter(theta2, z_top),
+                    getPosInner(theta2, z_top)
                  );
               }
            }
@@ -629,7 +662,19 @@ export default function Scene({
         const shadeMesh = new THREE.Mesh(geometry, new THREE.MeshBasicMaterial());
 
         // --- STEP 3: Generate Base Cap Mesh ---
-        const baseGeo = new THREE.CylinderGeometry(p.radius, p.radius, p.thickness, 128);
+        const baseGeo = new THREE.CylinderGeometry(1, 1, p.thickness, 128, 1, false);
+        const posArr = baseGeo.attributes.position.array;
+        for (let i = 0; i < posArr.length; i += 3) {
+          const bx = posArr[i], bz = posArr[i+2];
+          const dist = Math.sqrt(bx*bx + bz*bz);
+          if (dist > 0.001) {
+             let th = Math.atan2(bx, bz);
+             const R = getShapeRadius(th, p.shapeType, p.radius, p.boxWidth, p.boxDepth, p.boxCornerRadius);
+             posArr[i] = (bx / dist) * R;
+             posArr[i+2] = (bz / dist) * R;
+          }
+        }
+        baseGeo.computeVertexNormals();
         const baseMesh = new THREE.Mesh(baseGeo, new THREE.MeshBasicMaterial());
         baseMesh.rotation.set(Math.PI / 2, 0, 0);
         baseMesh.position.set(0, 0, p.distance - p.thickness / 2);
@@ -674,6 +719,77 @@ export default function Scene({
 
   const currentAlphaTest = cylinderAlphaMap ? 0.5 : 0;
 
+  const morphCylinder = (inner) => {
+    const geo = new THREE.CylinderGeometry(1, 1, height, 128, 1, true);
+    const pos = geo.attributes.position.array;
+    const thk = inner ? thickness : 0;
+    const w = boxWidth - 2 * thk;
+    const d = boxDepth - 2 * thk;
+    const cr = Math.max(0, boxCornerRadius - thk);
+    const rad = radius - thk;
+    for (let i = 0; i < pos.length; i += 3) {
+      const bx = pos[i], bz = pos[i+2];
+      const dist = Math.sqrt(bx*bx + bz*bz);
+      if (dist > 0.001) {
+         let th = Math.atan2(bx, bz);
+         const R = getShapeRadius(th, shapeType, rad, w, d, cr);
+         pos[i] = (bx / dist) * R;
+         pos[i+2] = (bz / dist) * R;
+      }
+    }
+    geo.computeVertexNormals();
+    return geo;
+  };
+
+  const morphBaseCap = () => {
+    const geo = new THREE.CylinderGeometry(1, 1, thickness, 128, 1, false);
+    const pos = geo.attributes.position.array;
+    for (let i = 0; i < pos.length; i += 3) {
+      const bx = pos[i], bz = pos[i+2];
+      const dist = Math.sqrt(bx*bx + bz*bz);
+      if (dist > 0.001) {
+         let th = Math.atan2(bx, bz);
+         const R = getShapeRadius(th, shapeType, radius, boxWidth, boxDepth, boxCornerRadius);
+         pos[i] = (bx / dist) * R;
+         pos[i+2] = (bz / dist) * R;
+      }
+    }
+    geo.computeVertexNormals();
+    return geo;
+  };
+
+  const morphRing = () => {
+    const geo = new THREE.RingGeometry(0.5, 1.0, 128);
+    const pos = geo.attributes.position.array;
+    const thk = thickness;
+    const w = boxWidth - 2 * thk;
+    const d = boxDepth - 2 * thk;
+    const crInner = Math.max(0, boxCornerRadius - thk);
+    
+    for (let i = 0; i < pos.length; i += 3) {
+       const x = pos[i], y = pos[i+1];
+       const dist = Math.sqrt(x*x + y*y);
+       if (dist > 0.001) {
+          const th = Math.atan2(x, -y);
+          let R = 1;
+          if (dist < 0.75) {
+             R = getShapeRadius(th, shapeType, radius - thk, w, d, crInner);
+          } else {
+             R = getShapeRadius(th, shapeType, radius, boxWidth, boxDepth, boxCornerRadius);
+          }
+          pos[i] = (x / dist) * R;
+          pos[i+1] = (y / dist) * R;
+       }
+    }
+    geo.computeVertexNormals();
+    return geo;
+  };
+
+  const outerGeo = useMemo(() => morphCylinder(false), [shapeType, radius, boxWidth, boxDepth, boxCornerRadius, height, thickness]);
+  const innerGeo = useMemo(() => morphCylinder(true), [shapeType, radius, boxWidth, boxDepth, boxCornerRadius, height, thickness]);
+  const capGeo = useMemo(() => morphBaseCap(), [shapeType, radius, boxWidth, boxDepth, boxCornerRadius, thickness]);
+  const rimGeo = useMemo(() => morphRing(), [shapeType, radius, boxWidth, boxDepth, boxCornerRadius, thickness]);
+
   return (
     // Fixed Camera position: Start at Z=-15 looking from the Origin perspective towards the Wall!!
     <Canvas camera={{ position: [15, 10, -15], fov: 45 }}>
@@ -685,7 +801,7 @@ export default function Scene({
       {/* We target looking at the wall (Z=distance) instead of (0,0,0) */}
       <OrbitControls target={[0, 0, distance]} makeDefault />
       <axesHelper args={[15]} />
-      <Grid infiniteGrid fadeDistance={40} fadeStrength={5} cellColor="#334155" sectionColor="#475569" position={[0, -Math.max(height, radius) - 1, 0]} />
+      <Grid infiniteGrid fadeDistance={40} fadeStrength={5} cellColor="#334155" sectionColor="#475569" position={[0, -Math.max(height, boxWidth/2) - 1, 0]} />
 
       {/* Origin Light Bulb */}
       <mesh position={[0, 0, 0]}>
@@ -694,8 +810,7 @@ export default function Scene({
       </mesh>
 
       {/* The Cylinder */}
-      <mesh position={[0, 0, distance - height / 2]} rotation={[Math.PI / 2, 0, 0]}>
-        <cylinderGeometry args={[radius, radius, height, 128, 1, true]} />
+      <mesh position={[0, 0, distance - height / 2]} rotation={[Math.PI / 2, 0, 0]} geometry={outerGeo}>
         <meshStandardMaterial 
           color={cylinderAlphaMap ? "#b4a9c1" : "#9b51e0"} 
           transparent={true}
@@ -707,8 +822,7 @@ export default function Scene({
       </mesh>
       
       {/* Inner Wall of Cylinder */}
-      <mesh position={[0, 0, distance - height / 2]} rotation={[Math.PI / 2, 0, 0]}>
-        <cylinderGeometry args={[radius - thickness, radius - thickness, height, 128, 1, true]} />
+      <mesh position={[0, 0, distance - height / 2]} rotation={[Math.PI / 2, 0, 0]} geometry={innerGeo}>
         <meshStandardMaterial 
           color={cylinderAlphaMap ? "#e2dff5" : "#c084fc"} 
           transparent={true}
@@ -720,8 +834,7 @@ export default function Scene({
       </mesh>
 
       {/* Top Cap Rim to seal the visual gap between Inner and Outer cylinders */}
-      <mesh position={[0, 0, distance - height]} rotation={[0, Math.PI, 0]}>
-        <ringGeometry args={[radius - thickness, radius, 128]} />
+      <mesh position={[0, 0, distance - height]} rotation={[0, Math.PI, 0]} geometry={rimGeo}>
         <meshStandardMaterial 
           color={cylinderAlphaMap ? "#b4a9c1" : "#9b51e0"}
           transparent={true}
@@ -731,8 +844,7 @@ export default function Scene({
       </mesh>
 
       {/* Solid Base Cap touching the wall */}
-      <mesh position={[0, 0, distance - thickness / 2]} rotation={[Math.PI / 2, 0, 0]}>
-        <cylinderGeometry args={[radius, radius, thickness, 128]} />
+      <mesh position={[0, 0, distance - thickness / 2]} rotation={[Math.PI / 2, 0, 0]} geometry={capGeo}>
         <meshStandardMaterial color="#7e22ce" side={THREE.DoubleSide} />
       </mesh>
 
