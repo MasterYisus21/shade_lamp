@@ -2,6 +2,39 @@ import React, { useMemo, useEffect, useState, useRef } from 'react';
 import { Canvas } from '@react-three/fiber';
 import { OrbitControls, Grid, Line } from '@react-three/drei';
 import * as THREE from 'three';
+import { STLExporter } from 'three/examples/jsm/exporters/STLExporter.js';
+import * as BufferGeometryUtils from 'three/examples/jsm/utils/BufferGeometryUtils.js';
+
+const getSubpixelValues = (img, x, y) => {
+  let x0 = Math.floor(x);
+  let y0 = Math.floor(y);
+  let x1 = x0 + 1;
+  let y1 = y0 + 1;
+  if (x0 < 0 || x1 >= img.width || y0 < 0 || y1 >= img.height) return { alpha: 0, bright: 255 };
+  
+  let dx = x - x0;
+  let dy = y - y0;
+  
+  const getP = (px, py) => {
+     let i = (py * img.width + px) * 4;
+     let a = img.data[i+3];
+     let b = (img.data[i] + img.data[i+1] + img.data[i+2]) / 3;
+     return { a, b };
+  };
+
+  let p00 = getP(x0, y0), p10 = getP(x1, y0);
+  let p01 = getP(x0, y1), p11 = getP(x1, y1);
+  
+  let aTop = p00.a * (1 - dx) + p10.a * dx;
+  let aBot = p01.a * (1 - dx) + p11.a * dx;
+  let alpha = aTop * (1 - dy) + aBot * dy;
+
+  let bTop = p00.b * (1 - dx) + p10.b * dx;
+  let bBot = p01.b * (1 - dx) + p11.b * dx;
+  let bright = bTop * (1 - dy) + bBot * dy;
+
+  return { alpha, bright };
+};
 
 const generateTestTexture = () => {
   const size = 20;
@@ -26,7 +59,10 @@ const generateTestTexture = () => {
 export default function Scene({ 
   radius, height, thickness, distance, bulbRadius, uploadedImage,
   imgOffsetX, imgOffsetY, imgScaleX, imgScaleY, imgRotation,
-  invertShadow, calculateTrigger, validateTrigger, resetPulse
+  imgFlipX, imgFlipY,
+  invertShadow, supportType, supportThickness, supportSpacing, 
+  calculateTrigger, validateTrigger, resetPulse,
+  exportTrigger, exportQuality, onExportComplete
 }) {
   const [wallTex, setWallTex] = useState(null);
   const [sourceImgData, setSourceImgData] = useState(null);
@@ -41,12 +77,17 @@ export default function Scene({
   const paramsRef = useRef({
     radius, height, thickness, distance,
     imgOffsetX, imgOffsetY, imgScaleX, imgScaleY, imgRotation,
-    invertShadow
+    imgFlipX, imgFlipY, invertShadow,
+    supportType, supportThickness, supportSpacing
   });
 
   useEffect(() => {
-    paramsRef.current = { radius, height, thickness, distance, imgOffsetX, imgOffsetY, imgScaleX, imgScaleY, imgRotation, invertShadow };
-  }, [radius, height, thickness, distance, imgOffsetX, imgOffsetY, imgScaleX, imgScaleY, imgRotation, invertShadow]);
+    paramsRef.current = { 
+      radius, height, thickness, distance, imgOffsetX, imgOffsetY, 
+      imgScaleX, imgScaleY, imgRotation, imgFlipX, imgFlipY, invertShadow,
+      supportType, supportThickness, supportSpacing
+    };
+  }, [radius, height, thickness, distance, imgOffsetX, imgOffsetY, imgScaleX, imgScaleY, imgRotation, imgFlipX, imgFlipY, invertShadow, supportType, supportThickness, supportSpacing]);
 
   // Handle Reset 
   useEffect(() => {
@@ -133,30 +174,51 @@ export default function Scene({
            const ly = ry / (p.imgScaleY || 1);
            
            if (lx >= -0.5 && lx <= 0.5 && ly >= -0.5 && ly <= 0.5) {
-              const pX = Math.floor((lx + 0.5) * sourceImgData.width);
-              const pY = Math.floor((0.5 - ly) * sourceImgData.height);
+              const finalLx = p.imgFlipX ? lx : -lx;
+              const finalLy = p.imgFlipY ? -ly : ly;
+              const pX = (finalLx + 0.5) * sourceImgData.width;
+              const pY = (0.5 - finalLy) * sourceImgData.height;
               
-              if (pX >= 0 && pX < sourceImgData.width && pY >= 0 && pY < sourceImgData.height) {
-                 const idx = (pY * sourceImgData.width + pX) * 4;
-                 const brightness = (sourceImgData.data[idx] + sourceImgData.data[idx+1] + sourceImgData.data[idx+2]) / 3;
-                 const alpha = sourceImgData.data[idx+3];
-                 
-                 if (alpha < 128) {
-                    isHole = p.invertShadow ? true : false;
-                 } else {
-                    const isDark = brightness < 128;
-                    isHole = p.invertShadow ? !isDark : isDark;
-                 }
+              const sampled = getSubpixelValues(sourceImgData, pX, pY);
+              if (sampled.alpha < 128) {
+                 isHole = p.invertShadow ? true : false;
+              } else {
+                 const isDark = sampled.bright < 128;
+                 isHole = p.invertShadow ? !isDark : isDark;
               }
            }
         }
         
-        // SUPPORT GRID: Overwrite hole state if on a grid line
-        // A thin grid every ~20 pixels (approx 1mm)
-        if (isHole) {
-           const gridSpacing = 20;
-           if (u % gridSpacing < 2 || v % gridSpacing < 2) {
-               isHole = false; // Turn back into solid plastic
+        if (isHole && p.supportType !== 'none') {
+           const arcLength = (u / W) * (2 * Math.PI * p.radius);
+           const zPos = (1.0 - (v / H)) * p.height; 
+           const spacing = p.supportSpacing / 10;
+           const thickness = p.supportThickness / 10;
+           
+           let isSupport = false;
+
+           if (p.supportType === 'vertical' || p.supportType === 'grid') {
+               if (Math.abs(arcLength) % spacing < thickness) isSupport = true;
+           }
+           if (p.supportType === 'horizontal' || p.supportType === 'grid') {
+               if (Math.abs(zPos) % spacing < thickness) isSupport = true;
+           }
+           if (p.supportType === 'diagonal_45' || p.supportType === 'diagonal_cross') {
+               const d = (arcLength * 0.7071 - zPos * 0.7071);
+               if (Math.abs(d) % spacing < thickness) isSupport = true;
+           }
+           if (p.supportType === 'diagonal_neg45' || p.supportType === 'diagonal_cross') {
+               const d = (arcLength * 0.7071 + zPos * 0.7071);
+               if (Math.abs(d) % spacing < thickness) isSupport = true;
+           }
+
+           if (isSupport) {
+              isHole = false;
+           }
+           
+           const rimSize = Math.max(2, Math.floor((10 / 512) * H));
+           if (v < rimSize || v > H - rimSize) {
+              isHole = false;
            }
         }
         
@@ -260,12 +322,354 @@ export default function Scene({
       }
     }
 
+    // Box Blur the edge detection for smoother contour line preview
+    const tempRaw = new Uint8Array(vData.data);
+    for (let y = 1; y < VH - 1; y++) {
+      for (let x = 1; x < VW - 1; x++) {
+         const idx = (y * VW + x) * 4;
+         let sumAlpha = 0;
+         for(let dy=-1; dy<=1; dy++) {
+            for(let dx=-1; dx<=1; dx++) {
+               sumAlpha += tempRaw[((y+dy) * VW + (x+dx)) * 4 + 3];
+            }
+         }
+         vData.data[idx+3] = sumAlpha / 9;
+         // Recolor based on blurred alpha
+         if (vData.data[idx+3] > 0) {
+            vData.data[idx] = 0;
+            vData.data[idx+1] = 160;
+            vData.data[idx+2] = 255;
+         }
+      }
+    }
+
     vCtx.putImageData(vData, 0, 0);
     const vTex = new THREE.CanvasTexture(vCanvas);
     setValidationMap(vTex);
     
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [validateTrigger]);
+
+  // 3. EXPORT STL GENERATION
+  useEffect(() => {
+    if (exportTrigger === 0) return;
+    
+    // We run in a small timeout to let React render the loading UI
+    setTimeout(() => {
+      try {
+        console.log("Generating STL with quality:", exportQuality);
+        const p = paramsRef.current;
+        let W = 512, H = 256;
+        if (exportQuality === 'low') { W = 256; H = 128; }
+        if (exportQuality === 'high') { W = 1024; H = 512; }
+        
+        // --- STEP 1: Compute Solid Grid ---
+        const grid = new Uint8Array(W * H);
+        const rot = p.imgRotation * Math.PI / 180;
+        const cosR = Math.cos(-rot);
+        const sinR = Math.sin(-rot);
+        
+        for (let v = 0; v < H; v++) {
+          const normalizedV = 1.0 - (v / H); 
+          const Z = (p.distance - p.height) + (normalizedV * p.height);
+          
+          for (let u = 0; u < W; u++) {
+            const normalizedU = u / W;
+            const theta = normalizedU * 2 * Math.PI;
+            const P_x = p.radius * Math.sin(theta);
+            const P_y = -p.radius * Math.cos(theta);
+            const P_z = Z;
+            
+            let isHole = false;
+            if (P_z > 0.001 && sourceImgData) { 
+               const k = p.distance / P_z;
+               const tx = (P_x * k) - p.imgOffsetX;
+               const ty = (P_y * k) - p.imgOffsetY;
+               const rx = tx * cosR - ty * sinR;
+               const ry = tx * sinR + ty * cosR;
+               const lx = rx / (p.imgScaleX || 1);
+               const ly = ry / (p.imgScaleY || 1);
+               
+               if (lx >= -0.5 && lx <= 0.5 && ly >= -0.5 && ly <= 0.5) {
+                  const finalLx = p.imgFlipX ? lx : -lx;
+                  const finalLy = p.imgFlipY ? -ly : ly;
+                  const pX = (finalLx + 0.5) * sourceImgData.width;
+                  const pY = (0.5 - finalLy) * sourceImgData.height;
+                  const sampled = getSubpixelValues(sourceImgData, pX, pY);
+                  if (sampled.alpha < 128) {
+                     isHole = p.invertShadow ? true : false;
+                  } else {
+                     const isDark = sampled.bright < 128;
+                     isHole = p.invertShadow ? !isDark : isDark;
+                  }
+               }
+            }
+            
+            if (isHole && p.supportType !== 'none') {
+               const arcLength = (u / W) * (2 * Math.PI * p.radius);
+               const zPos = (1.0 - (v / H)) * p.height; 
+               const spacing = p.supportSpacing / 10;
+               const thickness = p.supportThickness / 10;
+               
+               let isSupport = false;
+
+               if (p.supportType === 'vertical' || p.supportType === 'grid') {
+                   if (Math.abs(arcLength) % spacing < thickness) isSupport = true;
+               }
+               if (p.supportType === 'horizontal' || p.supportType === 'grid') {
+                   if (Math.abs(zPos) % spacing < thickness) isSupport = true;
+               }
+               if (p.supportType === 'diagonal_45' || p.supportType === 'diagonal_cross') {
+                   const d = (arcLength * 0.7071 - zPos * 0.7071);
+                   if (Math.abs(d) % spacing < thickness) isSupport = true;
+               }
+               if (p.supportType === 'diagonal_neg45' || p.supportType === 'diagonal_cross') {
+                   const d = (arcLength * 0.7071 + zPos * 0.7071);
+                   if (Math.abs(d) % spacing < thickness) isSupport = true;
+               }
+
+               if (isSupport) {
+                  isHole = false;
+               }
+
+               const rimSize = Math.max(2, Math.floor((10 / 512) * H));
+               if (v < rimSize || v > H - rimSize) {
+                  isHole = false;
+               }
+            }
+            
+            grid[v * W + u] = isHole ? 0 : 1;
+          }
+        }
+
+        // --- STEP 2: Voxel Mesh Generation ---
+        const vertices = [];
+        
+        const pushQuad = (p1, p2, p3, p4) => {
+           // Triangle 1: p1, p2, p3
+           vertices.push(...p1, ...p2, ...p3);
+           // Triangle 2: p1, p3, p4
+           vertices.push(...p1, ...p3, ...p4);
+        };
+
+        const getPos = (th, r, z_out) => {
+           let z = z_out;
+           if (r < p.radius) {
+              // Ensure the absolute top and bottom base-caps remain flat
+              const isBoundary = Math.abs(z_out - (p.distance)) < 0.01 || Math.abs(z_out - (p.distance - p.height)) < 0.01;
+              if (!isBoundary) {
+                  z = z_out * (r / p.radius);
+              }
+           }
+           return [r * Math.sin(th), -r * Math.cos(th), z];
+        };
+        const isSolid = (u_idx, v_idx) => {
+           if (v_idx < 0 || v_idx >= H) return false;
+           let wrapU = u_idx % W;
+           if (wrapU < 0) wrapU += W;
+           return grid[v_idx * W + wrapU] === 1;
+        };
+
+        const rIn = p.radius - p.thickness;
+        const rOut = p.radius;
+
+        for (let v = 0; v < H; v++) {
+           const v1 = 1.0 - (v / H);
+           const v2 = 1.0 - ((v + 1) / H);
+           const z_bot = (p.distance - p.height) + (v1 * p.height); // larger Z
+           const z_top = (p.distance - p.height) + (v2 * p.height); // smaller Z
+
+           for (let u = 0; u < W; u++) {
+              if (grid[v * W + u] === 0) continue; // Skip holes
+
+              const theta1 = (u / W) * 2 * Math.PI;
+              const theta2 = ((u + 1) / W) * 2 * Math.PI;
+
+              // Outer Face (+r)
+              pushQuad(
+                 getPos(theta1, rOut, z_bot),
+                 getPos(theta1, rOut, z_top),
+                 getPos(theta2, rOut, z_top),
+                 getPos(theta2, rOut, z_bot)
+              );
+
+              // Inner Face (-r)
+              pushQuad(
+                 getPos(theta2, rIn, z_bot),
+                 getPos(theta2, rIn, z_top),
+                 getPos(theta1, rIn, z_top),
+                 getPos(theta1, rIn, z_bot)
+              );
+
+              // Bottom face (+z) -> v decreased
+              if (!isSolid(u, v - 1)) {
+                 pushQuad(
+                    getPos(theta1, rOut, z_bot),
+                    getPos(theta2, rOut, z_bot),
+                    getPos(theta2, rIn, z_bot),
+                    getPos(theta1, rIn, z_bot)
+                 );
+              }
+
+              // Top face (-z) -> v increased
+              if (!isSolid(u, v + 1)) {
+                 pushQuad(
+                    getPos(theta1, rIn, z_top),
+                    getPos(theta2, rIn, z_top),
+                    getPos(theta2, rOut, z_top),
+                    getPos(theta1, rOut, z_top)
+                 );
+              }
+
+              // Left Face (-theta) -> u decreased
+              if (!isSolid(u - 1, v)) {
+                 pushQuad(
+                    getPos(theta1, rIn, z_top),
+                    getPos(theta1, rOut, z_top),
+                    getPos(theta1, rOut, z_bot),
+                    getPos(theta1, rIn, z_bot)
+                 );
+              }
+
+              // Right Face (+theta) -> u increased
+              if (!isSolid(u + 1, v)) {
+                 pushQuad(
+                    getPos(theta2, rIn, z_bot),
+                    getPos(theta2, rOut, z_bot),
+                    getPos(theta2, rOut, z_top),
+                    getPos(theta2, rIn, z_top)
+                 );
+              }
+           }
+        }
+
+        const unmergedGeo = new THREE.BufferGeometry();
+        unmergedGeo.setAttribute('position', new THREE.Float32BufferAttribute(vertices, 3));
+        const geometry = BufferGeometryUtils.mergeVertices(unmergedGeo, 0.0001);
+        
+        const posAttribute = geometry.getAttribute('position');
+        const indices = geometry.getIndex();
+
+        // 3D Anti-Aliasing: Laplacian Smoothing over the Voxel Mesh
+        if (indices && exportQuality !== 'low') {
+            const posArray = posAttribute.array;
+            const vertexCount = posAttribute.count;
+            
+            const constraints = new Array(vertexCount);
+            const zTopLimit = p.distance - p.height;
+            const zBotLimit = p.distance;
+            
+            for(let i=0; i<vertexCount; i++) {
+                const x = posArray[i*3];
+                const y = posArray[i*3+1];
+                const z = posArray[i*3+2];
+                const r = Math.sqrt(x*x + y*y);
+                
+                let isBoundaryZ = false;
+                let fixedZ = z;
+                if (Math.abs(z - zTopLimit) < 0.01) { isBoundaryZ = true; fixedZ = zTopLimit; }
+                if (Math.abs(z - zBotLimit) < 0.01) { isBoundaryZ = true; fixedZ = zBotLimit; }
+
+                constraints[i] = { r, isBoundaryZ, fixedZ };
+            }
+
+            const neighbors = new Array(vertexCount).fill(null).map(() => []);
+            const idxArray = indices.array;
+            for(let i=0; i<idxArray.length; i+=3) {
+                const a = idxArray[i], b = idxArray[i+1], c = idxArray[i+2];
+                neighbors[a].push(b, c);
+                neighbors[b].push(a, c);
+                neighbors[c].push(a, b);
+            }
+            
+            const smoothingIter = exportQuality === 'high' ? 8 : 4;
+            const newPos = new Float32Array(posArray.length);
+            
+            for (let iter=0; iter<smoothingIter; iter++) {
+                for(let i=0; i<vertexCount; i++) {
+                    const nbrs = [...new Set(neighbors[i])];
+                    if (nbrs.length === 0) {
+                       newPos[i*3] = posArray[i*3];
+                       newPos[i*3+1] = posArray[i*3+1];
+                       newPos[i*3+2] = posArray[i*3+2];
+                       continue;
+                    }
+                    let sumX = 0, sumY = 0, sumZ = 0;
+                    for(let j=0; j<nbrs.length; j++) {
+                        let ni = nbrs[j];
+                        sumX += posArray[ni*3];
+                        sumY += posArray[ni*3+1];
+                        sumZ += posArray[ni*3+2];
+                    }
+                    let avgX = sumX / nbrs.length;
+                    let avgY = sumY / nbrs.length;
+                    let avgZ = sumZ / nbrs.length;
+
+                    const c = constraints[i];
+                    const dist = Math.sqrt(avgX*avgX + avgY*avgY);
+                    if (dist > 0.0001) {
+                        avgX = (avgX / dist) * c.r;
+                        avgY = (avgY / dist) * c.r;
+                    }
+
+                    if (c.isBoundaryZ) {
+                        avgZ = c.fixedZ;
+                    }
+
+                    newPos[i*3] = avgX;
+                    newPos[i*3+1] = avgY;
+                    newPos[i*3+2] = avgZ;
+                }
+                posArray.set(newPos);
+            }
+        }
+
+        geometry.computeVertexNormals();
+        
+        const shadeMesh = new THREE.Mesh(geometry, new THREE.MeshBasicMaterial());
+
+        // --- STEP 3: Generate Base Cap Mesh ---
+        const baseGeo = new THREE.CylinderGeometry(p.radius, p.radius, p.thickness, 128);
+        const baseMesh = new THREE.Mesh(baseGeo, new THREE.MeshBasicMaterial());
+        baseMesh.rotation.set(Math.PI / 2, 0, 0);
+        baseMesh.position.set(0, 0, p.distance - p.thickness / 2);
+        
+        // Ensure matrices are computed before export
+        baseMesh.updateMatrixWorld(true);
+        shadeMesh.updateMatrixWorld(true);
+
+        const group = new THREE.Group();
+        group.add(shadeMesh);
+        group.add(baseMesh);
+        
+        // CORRECTION: Convert to Millimeters correctly (1cm = 10mm). 
+        // 3D Slicers assume coordinates are natively mm.
+        group.scale.set(10, 10, 10);
+        group.updateMatrixWorld(true);
+
+        // Export via STLExporter
+        const exporter = new STLExporter();
+        const stlString = exporter.parse(group);
+        
+        const blob = new Blob([stlString], { type: 'text/plain' });
+        const link = document.createElement('a');
+        link.style.display = 'none';
+        link.href = URL.createObjectURL(blob);
+        link.download = 'lampara_sombra.stl';
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+
+      } catch (err) {
+         console.error("Error generating STL:", err);
+         alert("Hubo un error exportando el archivo: " + err.message);
+      } finally {
+         if (onExportComplete) onExportComplete();
+      }
+    }, 150);
+    
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [exportTrigger]);
 
 
   const currentAlphaTest = cylinderAlphaMap ? 0.5 : 0;
@@ -291,7 +695,7 @@ export default function Scene({
 
       {/* The Cylinder */}
       <mesh position={[0, 0, distance - height / 2]} rotation={[Math.PI / 2, 0, 0]}>
-        <cylinderGeometry args={[radius, radius, height, 64, 1, true]} />
+        <cylinderGeometry args={[radius, radius, height, 128, 1, true]} />
         <meshStandardMaterial 
           color={cylinderAlphaMap ? "#b4a9c1" : "#9b51e0"} 
           transparent={true}
@@ -304,7 +708,7 @@ export default function Scene({
       
       {/* Inner Wall of Cylinder */}
       <mesh position={[0, 0, distance - height / 2]} rotation={[Math.PI / 2, 0, 0]}>
-        <cylinderGeometry args={[radius - thickness, radius - thickness, height, 64, 1, true]} />
+        <cylinderGeometry args={[radius - thickness, radius - thickness, height, 128, 1, true]} />
         <meshStandardMaterial 
           color={cylinderAlphaMap ? "#e2dff5" : "#c084fc"} 
           transparent={true}
@@ -315,9 +719,20 @@ export default function Scene({
         />
       </mesh>
 
+      {/* Top Cap Rim to seal the visual gap between Inner and Outer cylinders */}
+      <mesh position={[0, 0, distance - height]} rotation={[0, Math.PI, 0]}>
+        <ringGeometry args={[radius - thickness, radius, 128]} />
+        <meshStandardMaterial 
+          color={cylinderAlphaMap ? "#b4a9c1" : "#9b51e0"}
+          transparent={true}
+          opacity={cylinderAlphaMap ? 1 : 0.3} 
+          side={THREE.DoubleSide} 
+        />
+      </mesh>
+
       {/* Solid Base Cap touching the wall */}
       <mesh position={[0, 0, distance - thickness / 2]} rotation={[Math.PI / 2, 0, 0]}>
-        <cylinderGeometry args={[radius, radius, thickness, 64]} />
+        <cylinderGeometry args={[radius, radius, thickness, 128]} />
         <meshStandardMaterial color="#7e22ce" side={THREE.DoubleSide} />
       </mesh>
 
@@ -342,10 +757,10 @@ export default function Scene({
       />
 
       {/* Original Image Box Plane */}
-      {/* It sits perfectly ON the wall facing the bulb */}
+      {/* Plane is rotated to face the camera (-Z) normally, and flip vars invert this per axis */}
       <mesh 
         position={[imgOffsetX, imgOffsetY, distance]} 
-        rotation={[0, 0, imgRotation * Math.PI / 180]}
+        rotation={[imgFlipY ? Math.PI : 0, imgFlipX ? 0 : Math.PI, imgRotation * Math.PI / 180]}
         scale={[imgScaleX, imgScaleY, 1]}
       >
         <planeGeometry args={[1, 1]} />
@@ -355,6 +770,7 @@ export default function Scene({
           opacity={cylinderAlphaMap ? 0.3 : 1.0} 
           depthWrite={false}
           color="#ffffff"
+          side={THREE.DoubleSide}
         />
       </mesh>
 
