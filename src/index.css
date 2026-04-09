@@ -31,7 +31,7 @@ body {
 }
 
 .sidebar {
-  width: 320px;
+  width: 400px;
   background-color: var(--panel-bg);
   backdrop-filter: blur(16px);
   -webkit-backdrop-filter: blur(16px);

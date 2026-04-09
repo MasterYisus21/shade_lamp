@@ -95,195 +95,135 @@ function App() {
       {/* Sidebar Controls */}
       <div className="sidebar">
         <div className="header">
-          <h1>Shadow Lamp</h1>
-          <p>Projection Geometry MVP</p>
+          <h1>Lámpara de Sombras 3D</h1>
+          <p>Generador de Geometría STL</p>
         </div>
 
-        <div className="control-group">
-          <label>
-            Cylinder Radius
-            <span>{radius} cm</span>
-          </label>
-          <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-            <input
-              type="range"
-              min="1" max="10" step="0.1"
-              value={radius}
-              onChange={(e) => {
-                const newRadius = parseFloat(e.target.value);
-                setRadius(newRadius);
-                if (bulbRadius > newRadius - thickness) {
-                  setBulbRadius(Math.max(0.1, newRadius - thickness));
-                }
-              }}
-            />
-            <input
-              type="number"
-              min="1" max="10" step="0.1"
-              value={radius}
-              onChange={(e) => {
-                const newRadius = parseFloat(e.target.value);
-                setRadius(newRadius);
-                if (bulbRadius > newRadius - thickness) {
-                  setBulbRadius(Math.max(0.1, newRadius - thickness));
-                }
-              }}
-              style={{ width: '60px', padding: '4px', background: 'var(--input-bg)', color: 'white', border: '1px solid var(--border)', borderRadius: '4px' }}
-            />
+        <div style={{ padding: '16px', background: 'rgba(0,0,0,0.2)', borderRadius: '8px', border: '1px solid var(--border)', display: 'flex', flexDirection: 'column', gap: '16px' }}>
+          <h3 style={{ fontSize: '14px', color: 'var(--text-main)', borderBottom: '1px solid var(--border)', paddingBottom: '8px', margin: 0 }}>Parámetros de la Luz y Pared</h3>
+          <div className="control-group">
+            <label>Radio de la Bombilla (Luz) <span>{bulbRadius.toFixed(2)} cm</span></label>
+            <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+              <input type="range" min="0.1" max={maxBulbRadius} step="0.1" value={Math.min(bulbRadius, maxBulbRadius)} onChange={(e) => setBulbRadius(parseFloat(e.target.value))} />
+              <input type="number" min="0.1" max={maxBulbRadius} step="0.1" value={Math.min(bulbRadius, maxBulbRadius).toFixed(2)} onChange={(e) => setBulbRadius(parseFloat(e.target.value))} style={{ width: '60px', padding: '4px', background: 'var(--input-bg)', color: 'white', border: '1px solid var(--border)', borderRadius: '4px' }} />
+            </div>
           </div>
-        </div>
-
-        <div className="control-group">
-          <label>
-            Bulb Radius (Light Source)
-            <span>{bulbRadius.toFixed(2)} cm</span>
-          </label>
-          <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-            <input
-              type="range"
-              min="0.1" max={maxBulbRadius} step="0.1"
-              value={Math.min(bulbRadius, maxBulbRadius)}
-              onChange={(e) => setBulbRadius(parseFloat(e.target.value))}
-            />
-            <input
-              type="number"
-              min="0.1" max={maxBulbRadius} step="0.1"
-              value={Math.min(bulbRadius, maxBulbRadius).toFixed(2)}
-              onChange={(e) => setBulbRadius(parseFloat(e.target.value))}
-              style={{ width: '60px', padding: '4px', background: 'var(--input-bg)', color: 'white', border: '1px solid var(--border)', borderRadius: '4px' }}
-            />
-          </div>
-        </div>
-
-        <div className="control-group">
-          <label>
-            Cylinder Height
-            <span>{height} cm</span>
-          </label>
-          <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-            <input
-              type="range"
-              min="5" max="20" step="0.5"
-              value={height}
-              onChange={(e) => setHeight(parseFloat(e.target.value))}
-            />
-            <input
-              type="number"
-              min="5" max="20" step="0.5"
-              value={height}
-              onChange={(e) => setHeight(parseFloat(e.target.value))}
-              style={{ width: '60px', padding: '4px', background: 'var(--input-bg)', color: 'white', border: '1px solid var(--border)', borderRadius: '4px' }}
-            />
-          </div>
-        </div>
-
-        <div className="control-group">
-          <label>
-            Cylinder Wall Thickness
-            <span>{thickness} cm</span>
-          </label>
-          <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-            <input
-              type="range"
-              min="0.1" max="1" step="0.05"
-              value={thickness}
-              onChange={(e) => {
-                const newThickness = parseFloat(e.target.value);
-                setThickness(newThickness);
-                if (bulbRadius > radius - newThickness) {
-                  setBulbRadius(Math.max(0.1, radius - newThickness));
-                }
-              }}
-            />
-            <input
-              type="number"
-              min="0.1" max="1" step="0.05"
-              value={thickness}
-              onChange={(e) => {
-                const newThickness = parseFloat(e.target.value);
-                setThickness(newThickness);
-                if (bulbRadius > radius - newThickness) {
-                  setBulbRadius(Math.max(0.1, radius - newThickness));
-                }
-              }}
-              style={{ width: '60px', padding: '4px', background: 'var(--input-bg)', color: 'white', border: '1px solid var(--border)', borderRadius: '4px' }}
-            />
-          </div>
-        </div>
-
-        <div className="control-group">
-          <label>
-            Bulb to Wall Distance
-            <span>{distance} cm</span>
-          </label>
-          <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-            <input
-              type="range"
-              min="2" max="20" step="1"
-              value={distance}
-              onChange={(e) => setDistance(parseFloat(e.target.value))}
-            />
-            <input
-              type="number"
-              min="2" max="20" step="1"
-              value={distance}
-              onChange={(e) => setDistance(parseFloat(e.target.value))}
-              style={{ width: '60px', padding: '4px', background: 'var(--input-bg)', color: 'white', border: '1px solid var(--border)', borderRadius: '4px' }}
-            />
+          <div className="control-group">
+            <label>Distancia a la Pared de Proyección <span>{distance} cm</span></label>
+            <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+              <input type="range" min="2" max="20" step="1" value={distance} onChange={(e) => setDistance(parseFloat(e.target.value))} />
+              <input type="number" min="2" max="20" step="1" value={distance} onChange={(e) => setDistance(parseFloat(e.target.value))} style={{ width: '60px', padding: '4px', background: 'var(--input-bg)', color: 'white', border: '1px solid var(--border)', borderRadius: '4px' }} />
+            </div>
           </div>
         </div>
 
         <div style={{ padding: '16px', background: 'rgba(0,0,0,0.2)', borderRadius: '8px', border: '1px solid var(--border)', display: 'flex', flexDirection: 'column', gap: '16px' }}>
-          <h3 style={{ fontSize: '14px', color: 'var(--text-main)', borderBottom: '1px solid var(--border)', paddingBottom: '8px' }}>Image Projection Controls</h3>
+          <h3 style={{ fontSize: '14px', color: 'var(--text-main)', borderBottom: '1px solid var(--border)', paddingBottom: '8px', margin: 0 }}>Geometría del Cilindro (Lámpara)</h3>
+          <div className="control-group">
+            <label>Radio del Cilindro <span>{radius} cm</span></label>
+            <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+              <input type="range" min="1" max="10" step="0.1" value={radius} onChange={(e) => {
+                const newRadius = parseFloat(e.target.value);
+                setRadius(newRadius);
+                if (bulbRadius > newRadius - thickness) setBulbRadius(Math.max(0.1, newRadius - thickness));
+              }} />
+              <input type="number" min="1" max="10" step="0.1" value={radius} onChange={(e) => {
+                const newRadius = parseFloat(e.target.value);
+                setRadius(newRadius);
+                if (bulbRadius > newRadius - thickness) setBulbRadius(Math.max(0.1, newRadius - thickness));
+              }} style={{ width: '60px', padding: '4px', background: 'var(--input-bg)', color: 'white', border: '1px solid var(--border)', borderRadius: '4px' }} />
+            </div>
+          </div>
+          <div className="control-group">
+            <label>Altura del Cilindro <span>{height} cm</span></label>
+            <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+              <input type="range" min="5" max="20" step="0.5" value={height} onChange={(e) => setHeight(parseFloat(e.target.value))} />
+              <input type="number" min="5" max="20" step="0.5" value={height} onChange={(e) => setHeight(parseFloat(e.target.value))} style={{ width: '60px', padding: '4px', background: 'var(--input-bg)', color: 'white', border: '1px solid var(--border)', borderRadius: '4px' }} />
+            </div>
+          </div>
+          <div className="control-group">
+            <label>Grosor de la Pared <span>{thickness} cm</span></label>
+            <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+              <input type="range" min="0.1" max="1" step="0.05" value={thickness} onChange={(e) => {
+                const newThickness = parseFloat(e.target.value);
+                setThickness(newThickness);
+                if (bulbRadius > radius - newThickness) setBulbRadius(Math.max(0.1, radius - newThickness));
+              }} />
+              <input type="number" min="0.1" max="1" step="0.05" value={thickness} onChange={(e) => {
+                const newThickness = parseFloat(e.target.value);
+                setThickness(newThickness);
+                if (bulbRadius > radius - newThickness) setBulbRadius(Math.max(0.1, radius - newThickness));
+              }} style={{ width: '60px', padding: '4px', background: 'var(--input-bg)', color: 'white', border: '1px solid var(--border)', borderRadius: '4px' }} />
+            </div>
+          </div>
+        </div>
+
+        <div style={{ padding: '16px', background: 'rgba(0,0,0,0.2)', borderRadius: '8px', border: '1px solid var(--border)', display: 'flex', flexDirection: 'column', gap: '16px' }}>
+          <h3 style={{ fontSize: '14px', color: 'var(--text-main)', borderBottom: '1px solid var(--border)', paddingBottom: '8px', margin: 0 }}>Controles de Proyección de Imagen</h3>
 
           <div style={{ display: 'flex', gap: '12px' }}>
             <label className="upload-btn" style={{ flex: 1, padding: '8px', fontSize: '12px' }}>
               <Upload size={14} />
-              Upload Image
+              Subir Imagen
               <input type="file" accept="image/*" onChange={handleImageUpload} />
             </label>
             {uploadedImage && (
               <button className="upload-btn" onClick={handleRemoveImage} style={{ flex: 1, background: '#ef4444', padding: '8px', fontSize: '12px' }}>
-                Remove Image
+                Eliminar Imagen
               </button>
             )}
           </div>
 
           <div className="control-group">
-            <label>Width Scale (X) <span>{imgScaleX} cm</span></label>
-            <input type="range" min="1" max="100" step="1" value={imgScaleX} onChange={(e) => setImgScaleX(parseFloat(e.target.value))} />
+            <label>Escala Horizontal (X) <span>{imgScaleX} cm</span></label>
+            <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+              <input type="range" min="1" max="100" step="1" value={imgScaleX} onChange={(e) => setImgScaleX(parseFloat(e.target.value))} />
+              <input type="number" min="1" max="100" step="1" value={imgScaleX} onChange={(e) => setImgScaleX(parseFloat(e.target.value))} style={{ width: '60px', padding: '4px', background: 'var(--input-bg)', color: 'white', border: '1px solid var(--border)', borderRadius: '4px' }} />
+            </div>
           </div>
           <div className="control-group">
-            <label>Height Scale (Y) <span>{imgScaleY} cm</span></label>
-            <input type="range" min="1" max="100" step="1" value={imgScaleY} onChange={(e) => setImgScaleY(parseFloat(e.target.value))} />
+            <label>Escala Vertical (Y) <span>{imgScaleY} cm</span></label>
+            <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+              <input type="range" min="1" max="100" step="1" value={imgScaleY} onChange={(e) => setImgScaleY(parseFloat(e.target.value))} />
+              <input type="number" min="1" max="100" step="1" value={imgScaleY} onChange={(e) => setImgScaleY(parseFloat(e.target.value))} style={{ width: '60px', padding: '4px', background: 'var(--input-bg)', color: 'white', border: '1px solid var(--border)', borderRadius: '4px' }} />
+            </div>
           </div>
           <div className="control-group">
-            <label>Offset X <span>{imgOffsetX} cm</span></label>
-            <input type="range" min="-50" max="50" step="1" value={imgOffsetX} onChange={(e) => setImgOffsetX(parseFloat(e.target.value))} />
+            <label>Desplazamiento X <span>{imgOffsetX} cm</span></label>
+            <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+              <input type="range" min="-50" max="50" step="0.5" value={imgOffsetX} onChange={(e) => setImgOffsetX(parseFloat(e.target.value))} />
+              <input type="number" min="-50" max="50" step="0.5" value={imgOffsetX} onChange={(e) => setImgOffsetX(parseFloat(e.target.value))} style={{ width: '60px', padding: '4px', background: 'var(--input-bg)', color: 'white', border: '1px solid var(--border)', borderRadius: '4px' }} />
+            </div>
           </div>
           <div className="control-group">
-            <label>Offset Y <span>{imgOffsetY} cm</span></label>
-            <input type="range" min="-50" max="50" step="1" value={imgOffsetY} onChange={(e) => setImgOffsetY(parseFloat(e.target.value))} />
+            <label>Desplazamiento Y <span>{imgOffsetY} cm</span></label>
+            <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+              <input type="range" min="-50" max="50" step="0.5" value={imgOffsetY} onChange={(e) => setImgOffsetY(parseFloat(e.target.value))} />
+              <input type="number" min="-50" max="50" step="0.5" value={imgOffsetY} onChange={(e) => setImgOffsetY(parseFloat(e.target.value))} style={{ width: '60px', padding: '4px', background: 'var(--input-bg)', color: 'white', border: '1px solid var(--border)', borderRadius: '4px' }} />
+            </div>
           </div>
           <div className="control-group">
-            <label>Rotation <span>{imgRotation}°</span></label>
-            <input type="range" min="-180" max="180" step="1" value={imgRotation} onChange={(e) => setImgRotation(parseFloat(e.target.value))} />
+            <label>Rotación <span>{imgRotation}°</span></label>
+            <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+              <input type="range" min="-180" max="180" step="1" value={imgRotation} onChange={(e) => setImgRotation(parseFloat(e.target.value))} />
+              <input type="number" min="-180" max="180" step="1" value={imgRotation} onChange={(e) => setImgRotation(parseFloat(e.target.value))} style={{ width: '60px', padding: '4px', background: 'var(--input-bg)', color: 'white', border: '1px solid var(--border)', borderRadius: '4px' }} />
+            </div>
           </div>
 
           <div style={{ display: 'flex', gap: '16px', marginTop: '8px' }}>
             <label style={{ display: 'flex', alignItems: 'center', gap: '8px', color: 'var(--text-main)', fontSize: '14px', cursor: 'pointer' }}>
               <input type="checkbox" checked={imgFlipX} onChange={(e) => setImgFlipX(e.target.checked)} style={{ transform: 'scale(1.2)' }} />
-              Flip X
+              Reflejar X
             </label>
             <label style={{ display: 'flex', alignItems: 'center', gap: '8px', color: 'var(--text-main)', fontSize: '14px', cursor: 'pointer' }}>
               <input type="checkbox" checked={imgFlipY} onChange={(e) => setImgFlipY(e.target.checked)} style={{ transform: 'scale(1.2)' }} />
-              Flip Y
+              Reflejar Y
             </label>
           </div>
 
           <label style={{ display: 'flex', alignItems: 'center', gap: '8px', color: 'var(--text-main)', fontSize: '14px', marginTop: '8px', cursor: 'pointer' }}>
             <input type="checkbox" checked={invertShadow} onChange={(e) => setInvertShadow(e.target.checked)} style={{ transform: 'scale(1.2)' }} />
-            Invert Shadow (Holes vs Solid)
+            Invertir Sombra (Huecos vs Sólidos)
           </label>
         </div>
 
@@ -321,12 +261,12 @@ function App() {
         <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginTop: '16px' }}>
           <button className="upload-btn" onClick={handleCalculate} style={{ background: '#9b51e0' }}>
             <Calculator size={18} />
-            1. Calculate Holes (Mesh/Grid)
+            1. Generar Vista Previa (Recortar Matriz)
           </button>
 
           <button className="upload-btn" onClick={handleValidate} style={{ background: '#2563eb' }}>
             <Lightbulb size={18} />
-            2. Trace Real Shadow (Blue Contour)
+            2. Trazar Sombra Real (Contorno Azul)
           </button>
 
           <div style={{ display: 'flex', gap: '8px', marginTop: '16px' }}>
@@ -341,22 +281,22 @@ function App() {
             </select>
             <button className="upload-btn" onClick={handleExport} style={{ background: '#10b981', flex: 1 }}>
               <Download size={18} />
-              3. Exportar STL
+              3. Descargar STL
             </button>
           </div>
 
           <button className="upload-btn" onClick={handleReset} style={{ background: '#475569', marginTop: '16px' }}>
-            Reset Result Geometry
+            Restablecer Memoria (Borrar Previsualizaciones)
           </button>
         </div>
 
         <div className="info-box">
           <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '8px', color: 'var(--text-main)' }}>
             <Lightbulb size={16} color="var(--accent)" />
-            <strong>Geometry Constraints</strong>
+            <strong>Restricciones Lógicas (Geometría)</strong>
           </div>
-          The light origin is placed at (0,0,0). The projection wall is at Z = {distance}.
-          The cylinder surrounds the origin with a radius of {radius}.
+          El origen de la luz se encuentra en [0,0,0]. La pared de proyección en Z = {distance} cm. 
+          El bombillo (radio interno máximo) debe ser más pequeño que el interior de la lámpara.
         </div>
       </div>
 
