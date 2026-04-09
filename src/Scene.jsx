@@ -92,7 +92,7 @@ export default function Scene({
   imgFlipX, imgFlipY,
   invertShadow, supportType, supportThickness, supportSpacing, 
   calculateTrigger, validateTrigger, resetPulse,
-  exportTrigger, exportQuality, onExportComplete
+  exportTrigger, exportQuality, onExportComplete, bgColor
 }) {
   const [wallTex, setWallTex] = useState(null);
   const [sourceImgData, setSourceImgData] = useState(null);
@@ -178,6 +178,30 @@ export default function Scene({
     const cosR = Math.cos(-rot);
     const sinR = Math.sin(-rot);
 
+    // Precalculate arc lengths to ensure even support distribution
+    const arcLengths = new Float32Array(W);
+    let totalPerimeter = 0;
+    let prevX = getShapeRadius(0, p.shapeType, p.radius, p.boxWidth, p.boxDepth, p.boxCornerRadius) * Math.sin(0);
+    let prevY = -getShapeRadius(0, p.shapeType, p.radius, p.boxWidth, p.boxDepth, p.boxCornerRadius) * Math.cos(0);
+    
+    for (let u = 1; u <= W; u++) {
+        const uMod = u % W;
+        const theta = (uMod / W) * 2 * Math.PI;
+        const r = getShapeRadius(theta, p.shapeType, p.radius, p.boxWidth, p.boxDepth, p.boxCornerRadius);
+        const px = r * Math.sin(theta);
+        const py = -r * Math.cos(theta);
+        const dx = px - prevX;
+        const dy = py - prevY;
+        totalPerimeter += Math.sqrt(dx*dx + dy*dy);
+        if (u < W) arcLengths[u] = totalPerimeter;
+        prevX = px;
+        prevY = py;
+    }
+    
+    const targetSpacing = p.supportSpacing / 10;
+    const nSupports = Math.max(1, Math.round(totalPerimeter / targetSpacing));
+    const adjustedSpacing = totalPerimeter / nSupports;
+
     for (let v = 0; v < H; v++) {
       const normalizedV = 1.0 - (v / H); 
       const Z = (p.distance - p.height) + (normalizedV * p.height);
@@ -221,9 +245,9 @@ export default function Scene({
         }
         
         if (isHole && p.supportType !== 'none') {
-           const arcLength = (u / W) * (2 * Math.PI * currentRadius);
+           const arcLength = u === 0 ? 0 : arcLengths[u];
            const zPos = (1.0 - (v / H)) * p.height; 
-           const spacing = p.supportSpacing / 10;
+           const spacing = adjustedSpacing;
            const thickness = p.supportThickness / 10;
            
            let isSupport = false;
@@ -400,6 +424,30 @@ export default function Scene({
         const cosR = Math.cos(-rot);
         const sinR = Math.sin(-rot);
         
+        // Precalculate arc lengths to ensure even support distribution
+        const arcLengths = new Float32Array(W);
+        let totalPerimeter = 0;
+        let prevX = getShapeRadius(0, p.shapeType, p.radius, p.boxWidth, p.boxDepth, p.boxCornerRadius) * Math.sin(0);
+        let prevY = -getShapeRadius(0, p.shapeType, p.radius, p.boxWidth, p.boxDepth, p.boxCornerRadius) * Math.cos(0);
+        
+        for (let u = 1; u <= W; u++) {
+            const uMod = u % W;
+            const theta = (uMod / W) * 2 * Math.PI;
+            const r = getShapeRadius(theta, p.shapeType, p.radius, p.boxWidth, p.boxDepth, p.boxCornerRadius);
+            const px = r * Math.sin(theta);
+            const py = -r * Math.cos(theta);
+            const dx = px - prevX;
+            const dy = py - prevY;
+            totalPerimeter += Math.sqrt(dx*dx + dy*dy);
+            if (u < W) arcLengths[u] = totalPerimeter;
+            prevX = px;
+            prevY = py;
+        }
+        
+        const targetSpacing = p.supportSpacing / 10;
+        const nSupports = Math.max(1, Math.round(totalPerimeter / targetSpacing));
+        const adjustedSpacing = totalPerimeter / nSupports;
+
         for (let v = 0; v < H; v++) {
           const normalizedV = 1.0 - (v / H); 
           const Z = (p.distance - p.height) + (normalizedV * p.height);
@@ -438,9 +486,9 @@ export default function Scene({
             }
             
             if (isHole && p.supportType !== 'none') {
-               const arcLength = (u / W) * (2 * Math.PI * currentRadius);
+               const arcLength = u === 0 ? 0 : arcLengths[u];
                const zPos = (1.0 - (v / H)) * p.height; 
-               const spacing = p.supportSpacing / 10;
+               const spacing = adjustedSpacing;
                const thickness = p.supportThickness / 10;
                
                let isSupport = false;
@@ -851,7 +899,7 @@ export default function Scene({
       {/* Generic dark Wall - pushed BACK slightly (Z = distance + 0.05) to naturally sit behind the Base Cap and Image plane */}
       <mesh position={[0, 0, distance + 0.05]} receiveShadow>
         <planeGeometry args={[200, 200]} />
-        <meshStandardMaterial color="#1e293b" side={THREE.DoubleSide} />
+        <meshStandardMaterial color={bgColor || "#1e293b"} side={THREE.DoubleSide} />
       </mesh>
 
       {/* 1 Meter Reference Bounds on the Wall */}

@@ -11,6 +11,7 @@ function App() {
   const [distance, setDistance] = useState(7);
   const [bulbRadius, setBulbRadius] = useState(1);
   const [uploadedImage, setUploadedImage] = useState(null);
+  const [bgColor, setBgColor] = useState('#1e293b');
 
   // Box Shape State
   const [shapeType, setShapeType] = useState('cylinder'); // 'cylinder' | 'box'
@@ -43,9 +44,9 @@ function App() {
   const [exportQuality, setExportQuality] = useState('medium');
   const [isExporting, setIsExporting] = useState(false);
 
-  const maxBulbRadius = shapeType === 'cylinder' 
-     ? Math.max(0.1, radius - thickness) 
-     : Math.max(0.1, Math.min(boxWidth/2, boxDepth/2) - thickness);
+  const maxBulbRadius = shapeType === 'cylinder'
+    ? Math.max(0.1, radius - thickness)
+    : Math.max(0.1, Math.min(boxWidth / 2, boxDepth / 2) - thickness);
 
   const handleImageUpload = (e) => {
     const file = e.target.files[0];
@@ -109,6 +110,17 @@ function App() {
         <div style={{ padding: '16px', background: 'rgba(0,0,0,0.2)', borderRadius: '8px', border: '1px solid var(--border)', display: 'flex', flexDirection: 'column', gap: '16px' }}>
           <h3 style={{ fontSize: '14px', color: 'var(--text-main)', borderBottom: '1px solid var(--border)', paddingBottom: '8px', margin: 0 }}>Parámetros de la Luz y Pared</h3>
           <div className="control-group">
+            <label>Color de la Pared (Lienzo)</label>
+            <select
+              value={bgColor}
+              onChange={(e) => setBgColor(e.target.value)}
+              style={{ background: 'var(--input-bg)', color: 'white', border: '1px solid var(--border)', borderRadius: '4px', padding: '4px 8px', width: '100%' }}
+            >
+              <option value="#1e293b">Oscuro</option>
+              <option value="#ffffff">Claro (Blanco)</option>
+            </select>
+          </div>
+          <div className="control-group">
             <label>Radio de la Bombilla (Luz) <span>{bulbRadius.toFixed(2)} cm</span></label>
             <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
               <input type="range" min="0.1" max={maxBulbRadius} step="0.1" value={Math.min(bulbRadius, maxBulbRadius)} onChange={(e) => setBulbRadius(parseFloat(e.target.value))} />
@@ -126,22 +138,22 @@ function App() {
 
         <div style={{ padding: '16px', background: 'rgba(0,0,0,0.2)', borderRadius: '8px', border: '1px solid var(--border)', display: 'flex', flexDirection: 'column', gap: '16px' }}>
           <h3 style={{ fontSize: '14px', color: 'var(--text-main)', borderBottom: '1px solid var(--border)', paddingBottom: '8px', margin: 0 }}>Geometría de la Lámpara</h3>
-          
+
           <div className="control-group">
             <label>Tipo de Lámpara</label>
             <select
               value={shapeType}
               onChange={(e) => {
-                 setShapeType(e.target.value);
-                 if (e.target.value === 'box') {
-                    if (bulbRadius > Math.min(boxWidth/2, boxDepth/2) - thickness) {
-                       setBulbRadius(Math.max(0.1, Math.min(boxWidth/2, boxDepth/2) - thickness));
-                    }
-                 } else {
-                    if (bulbRadius > radius - thickness) {
-                       setBulbRadius(Math.max(0.1, radius - thickness));
-                    }
-                 }
+                setShapeType(e.target.value);
+                if (e.target.value === 'box') {
+                  if (bulbRadius > Math.min(boxWidth / 2, boxDepth / 2) - thickness) {
+                    setBulbRadius(Math.max(0.1, Math.min(boxWidth / 2, boxDepth / 2) - thickness));
+                  }
+                } else {
+                  if (bulbRadius > radius - thickness) {
+                    setBulbRadius(Math.max(0.1, radius - thickness));
+                  }
+                }
               }}
               style={{ background: 'var(--input-bg)', color: 'white', border: '1px solid var(--border)', borderRadius: '4px', padding: '4px 8px', width: '100%' }}
             >
@@ -174,14 +186,14 @@ function App() {
                   <input type="range" min="2" max="30" step="0.5" value={boxWidth} onChange={(e) => {
                     const val = parseFloat(e.target.value);
                     setBoxWidth(val);
-                    if (boxCornerRadius > Math.min(val/2, boxDepth/2)) setBoxCornerRadius(Math.max(0, Math.min(val/2, boxDepth/2)));
-                    if (bulbRadius > Math.min(val/2, boxDepth/2) - thickness) setBulbRadius(Math.max(0.1, Math.min(val/2, boxDepth/2) - thickness));
+                    if (boxCornerRadius > Math.min(val / 2, boxDepth / 2)) setBoxCornerRadius(Math.max(0, Math.min(val / 2, boxDepth / 2)));
+                    if (bulbRadius > Math.min(val / 2, boxDepth / 2) - thickness) setBulbRadius(Math.max(0.1, Math.min(val / 2, boxDepth / 2) - thickness));
                   }} />
                   <input type="number" min="2" max="30" step="0.5" value={boxWidth} onChange={(e) => {
                     const val = parseFloat(e.target.value);
                     setBoxWidth(val);
-                    if (boxCornerRadius > Math.min(val/2, boxDepth/2)) setBoxCornerRadius(Math.max(0, Math.min(val/2, boxDepth/2)));
-                    if (bulbRadius > Math.min(val/2, boxDepth/2) - thickness) setBulbRadius(Math.max(0.1, Math.min(val/2, boxDepth/2) - thickness));
+                    if (boxCornerRadius > Math.min(val / 2, boxDepth / 2)) setBoxCornerRadius(Math.max(0, Math.min(val / 2, boxDepth / 2)));
+                    if (bulbRadius > Math.min(val / 2, boxDepth / 2) - thickness) setBulbRadius(Math.max(0.1, Math.min(val / 2, boxDepth / 2) - thickness));
                   }} style={{ width: '60px', padding: '4px', background: 'var(--input-bg)', color: 'white', border: '1px solid var(--border)', borderRadius: '4px' }} />
                 </div>
               </div>
@@ -191,22 +203,22 @@ function App() {
                   <input type="range" min="2" max="30" step="0.5" value={boxDepth} onChange={(e) => {
                     const val = parseFloat(e.target.value);
                     setBoxDepth(val);
-                    if (boxCornerRadius > Math.min(boxWidth/2, val/2)) setBoxCornerRadius(Math.max(0, Math.min(boxWidth/2, val/2)));
-                    if (bulbRadius > Math.min(boxWidth/2, val/2) - thickness) setBulbRadius(Math.max(0.1, Math.min(boxWidth/2, val/2) - thickness));
+                    if (boxCornerRadius > Math.min(boxWidth / 2, val / 2)) setBoxCornerRadius(Math.max(0, Math.min(boxWidth / 2, val / 2)));
+                    if (bulbRadius > Math.min(boxWidth / 2, val / 2) - thickness) setBulbRadius(Math.max(0.1, Math.min(boxWidth / 2, val / 2) - thickness));
                   }} />
                   <input type="number" min="2" max="30" step="0.5" value={boxDepth} onChange={(e) => {
                     const val = parseFloat(e.target.value);
                     setBoxDepth(val);
-                    if (boxCornerRadius > Math.min(boxWidth/2, val/2)) setBoxCornerRadius(Math.max(0, Math.min(boxWidth/2, val/2)));
-                    if (bulbRadius > Math.min(boxWidth/2, val/2) - thickness) setBulbRadius(Math.max(0.1, Math.min(boxWidth/2, val/2) - thickness));
+                    if (boxCornerRadius > Math.min(boxWidth / 2, val / 2)) setBoxCornerRadius(Math.max(0, Math.min(boxWidth / 2, val / 2)));
+                    if (bulbRadius > Math.min(boxWidth / 2, val / 2) - thickness) setBulbRadius(Math.max(0.1, Math.min(boxWidth / 2, val / 2) - thickness));
                   }} style={{ width: '60px', padding: '4px', background: 'var(--input-bg)', color: 'white', border: '1px solid var(--border)', borderRadius: '4px' }} />
                 </div>
               </div>
               <div className="control-group">
                 <label>Radio de Esquina (Bordes) <span>{boxCornerRadius} cm</span></label>
                 <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-                  <input type="range" min="0" max={Math.min(boxWidth/2, boxDepth/2)} step="0.5" value={boxCornerRadius} onChange={(e) => setBoxCornerRadius(parseFloat(e.target.value))} />
-                  <input type="number" min="0" max={Math.min(boxWidth/2, boxDepth/2)} step="0.5" value={boxCornerRadius} onChange={(e) => setBoxCornerRadius(parseFloat(e.target.value))} style={{ width: '60px', padding: '4px', background: 'var(--input-bg)', color: 'white', border: '1px solid var(--border)', borderRadius: '4px' }} />
+                  <input type="range" min="0" max={Math.min(boxWidth / 2, boxDepth / 2)} step="0.5" value={boxCornerRadius} onChange={(e) => setBoxCornerRadius(parseFloat(e.target.value))} />
+                  <input type="number" min="0" max={Math.min(boxWidth / 2, boxDepth / 2)} step="0.5" value={boxCornerRadius} onChange={(e) => setBoxCornerRadius(parseFloat(e.target.value))} style={{ width: '60px', padding: '4px', background: 'var(--input-bg)', color: 'white', border: '1px solid var(--border)', borderRadius: '4px' }} />
                 </div>
               </div>
             </>
@@ -224,13 +236,13 @@ function App() {
               <input type="range" min="0.1" max="1" step="0.05" value={thickness} onChange={(e) => {
                 const newThickness = parseFloat(e.target.value);
                 setThickness(newThickness);
-                const boundRad = shapeType === 'cylinder' ? radius : Math.min(boxWidth/2, boxDepth/2);
+                const boundRad = shapeType === 'cylinder' ? radius : Math.min(boxWidth / 2, boxDepth / 2);
                 if (bulbRadius > boundRad - newThickness) setBulbRadius(Math.max(0.1, boundRad - newThickness));
               }} />
               <input type="number" min="0.1" max="1" step="0.05" value={thickness} onChange={(e) => {
                 const newThickness = parseFloat(e.target.value);
                 setThickness(newThickness);
-                const boundRad = shapeType === 'cylinder' ? radius : Math.min(boxWidth/2, boxDepth/2);
+                const boundRad = shapeType === 'cylinder' ? radius : Math.min(boxWidth / 2, boxDepth / 2);
                 if (bulbRadius > boundRad - newThickness) setBulbRadius(Math.max(0.1, boundRad - newThickness));
               }} style={{ width: '60px', padding: '4px', background: 'var(--input-bg)', color: 'white', border: '1px solid var(--border)', borderRadius: '4px' }} />
             </div>
@@ -374,7 +386,7 @@ function App() {
             <Lightbulb size={16} color="var(--accent)" />
             <strong>Restricciones Lógicas (Geometría)</strong>
           </div>
-          El origen de la luz se encuentra en [0,0,0]. La pared de proyección en Z = {distance} cm. 
+          El origen de la luz se encuentra en [0,0,0]. La pared de proyección en Z = {distance} cm.
           El bombillo (radio interno máximo) debe ser más pequeño que el interior de la lámpara.
         </div>
       </div>
@@ -409,6 +421,7 @@ function App() {
           exportTrigger={exportTrigger}
           exportQuality={exportQuality}
           onExportComplete={() => setIsExporting(false)}
+          bgColor={bgColor}
         />
       </div>
     </div>
