@@ -11,7 +11,9 @@ function App() {
   const [distance, setDistance] = useState(7);
   const [bulbRadius, setBulbRadius] = useState(1);
   const [uploadedImage, setUploadedImage] = useState(null);
+  const [imageName, setImageName] = useState('sin_img');
   const [bgColor, setBgColor] = useState('#1e293b');
+  const [lightFillColor, setLightFillColor] = useState('yellow');
 
   // Box Shape State
   const [shapeType, setShapeType] = useState('cylinder'); // 'cylinder' | 'box'
@@ -39,10 +41,10 @@ function App() {
   const [validateTrigger, setValidateTrigger] = useState(0);
   const [resetPulse, setResetPulse] = useState(0);
 
-  // STL Export Logic
+  // STL Export & Loading Logic
   const [exportTrigger, setExportTrigger] = useState(0);
   const [exportQuality, setExportQuality] = useState('medium');
-  const [isExporting, setIsExporting] = useState(false);
+  const [loadingState, setLoadingState] = useState({ isLoading: false, title: '', description: '' });
 
   const maxBulbRadius = shapeType === 'cylinder'
     ? Math.max(0.1, radius - thickness)
@@ -51,6 +53,7 @@ function App() {
   const handleImageUpload = (e) => {
     const file = e.target.files[0];
     if (file) {
+      setImageName(file.name.substring(0, file.name.lastIndexOf('.')) || file.name);
       const reader = new FileReader();
       reader.onload = (event) => {
         setUploadedImage(event.target.result);
@@ -61,14 +64,21 @@ function App() {
 
   const handleRemoveImage = () => {
     setUploadedImage(null);
+    setImageName('sin_img');
   };
 
   const handleCalculate = () => {
-    setCalculateTrigger(t => t + 1);
+    setLoadingState({ isLoading: true, title: 'Calculando Geometría', description: 'Calculando proyección de sombras...' });
+    setTimeout(() => {
+      setCalculateTrigger(t => t + 1);
+    }, 150);
   };
 
   const handleValidate = () => {
-    setValidateTrigger(t => t + 1);
+    setLoadingState({ isLoading: true, title: 'Validando Sombra', description: 'Trazando luz y sombra real...' });
+    setTimeout(() => {
+      setValidateTrigger(t => t + 1);
+    }, 150);
   };
 
   const handleReset = () => {
@@ -76,7 +86,7 @@ function App() {
   };
 
   const handleExport = () => {
-    setIsExporting(true);
+    setLoadingState({ isLoading: true, title: 'Generando Modelo STL...', description: 'Este proceso puede tardar unos segundos. Por favor espera.' });
     // Timeout allows the UI to render the loading overlay before freezing the thread
     setTimeout(() => {
       setExportTrigger(t => t + 1);
@@ -86,7 +96,7 @@ function App() {
   return (
     <div className="app-container">
       {/* Loading Overlay */}
-      {isExporting && (
+      {loadingState.isLoading && (
         <div style={{
           position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
           backgroundColor: 'rgba(15, 23, 42, 0.9)', zIndex: 9999,
@@ -95,8 +105,8 @@ function App() {
         }}>
           <Loader2 size={48} className="lucide-spin" style={{ animation: 'spin 2s linear infinite', marginBottom: '16px', color: '#c084fc' }} />
           <style>{`@keyframes spin { 100% { transform: rotate(360deg); } }`}</style>
-          <h2 style={{ margin: '0 0 8px 0' }}>Generando Modelo STL...</h2>
-          <p style={{ color: '#94a3b8', margin: 0 }}>Este proceso puede tardar unos segundos. Por favor espera.</p>
+          <h2 style={{ margin: '0 0 8px 0' }}>{loadingState.title}</h2>
+          <p style={{ color: '#94a3b8', margin: 0 }}>{loadingState.description}</p>
         </div>
       )}
 
@@ -118,6 +128,18 @@ function App() {
             >
               <option value="#1e293b">Oscuro</option>
               <option value="#ffffff">Claro (Blanco)</option>
+            </select>
+          </div>
+          <div className="control-group">
+            <label>Color de la Luz (Validación)</label>
+            <select
+              value={lightFillColor}
+              onChange={(e) => setLightFillColor(e.target.value)}
+              style={{ background: 'var(--input-bg)', color: 'white', border: '1px solid var(--border)', borderRadius: '4px', padding: '4px 8px', width: '100%' }}
+            >
+              <option value="yellow">Luz Cálida (Amarillento)</option>
+              <option value="white">Luz Intensa (Blanco)</option>
+              <option value="blue">Luz Fría (Neon Azul)</option>
             </select>
           </div>
           <div className="control-group">
@@ -264,6 +286,9 @@ function App() {
               </button>
             )}
           </div>
+          <small style={{ color: 'var(--text-main)', opacity: 0.8, fontSize: '12px', marginTop: '-10px' }}>
+            <strong>Recomendación:</strong> Usa imágenes <strong>SVG</strong> para obtener cortes con curvas perfectas de máxima resolución en tu modelo 3D.
+          </small>
 
           <div className="control-group">
             <label>Escala Horizontal (X) <span>{imgScaleX} cm</span></label>
@@ -369,6 +394,7 @@ function App() {
               <option value="low">Calidad: Baja (256x128)</option>
               <option value="medium">Calidad: Media (512x256)</option>
               <option value="high">Calidad: Alta (1024x512)</option>
+              <option value="ultra">Calidad: Ultra (2048x1024)</option>
             </select>
             <button className="upload-btn" onClick={handleExport} style={{ background: '#10b981', flex: 1 }}>
               <Download size={18} />
@@ -404,6 +430,7 @@ function App() {
           distance={distance}
           bulbRadius={Math.min(bulbRadius, maxBulbRadius)}
           uploadedImage={uploadedImage}
+          imageName={imageName}
           imgOffsetX={imgOffsetX}
           imgOffsetY={imgOffsetY}
           imgScaleX={imgScaleX}
@@ -420,8 +447,11 @@ function App() {
           resetPulse={resetPulse}
           exportTrigger={exportTrigger}
           exportQuality={exportQuality}
-          onExportComplete={() => setIsExporting(false)}
+          onCalculateComplete={() => setLoadingState({ isLoading: false, title: '', description: '' })}
+          onValidateComplete={() => setLoadingState({ isLoading: false, title: '', description: '' })}
+          onExportComplete={() => setLoadingState({ isLoading: false, title: '', description: '' })}
           bgColor={bgColor}
+          lightFillColor={lightFillColor}
         />
       </div>
     </div>

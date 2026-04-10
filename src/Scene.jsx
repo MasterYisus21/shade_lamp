@@ -5,6 +5,8 @@ import * as THREE from 'three';
 import { STLExporter } from 'three/examples/jsm/exporters/STLExporter.js';
 import * as BufferGeometryUtils from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 
+const yieldToMain = () => new Promise(resolve => setTimeout(resolve, 0));
+
 const getShapeRadius = (theta, type, radius, width, depth, cr) => {
    if (type === 'cylinder') return radius;
    let th = theta % (2 * Math.PI);
@@ -87,12 +89,14 @@ const generateTestTexture = () => {
 };
 
 export default function Scene({ 
-  radius, shapeType, boxWidth, boxDepth, boxCornerRadius, height, thickness, distance, bulbRadius, uploadedImage,
+  radius, shapeType, boxWidth, boxDepth, boxCornerRadius, height, thickness, distance, bulbRadius, uploadedImage, imageName,
   imgOffsetX, imgOffsetY, imgScaleX, imgScaleY, imgRotation,
   imgFlipX, imgFlipY,
   invertShadow, supportType, supportThickness, supportSpacing, 
   calculateTrigger, validateTrigger, resetPulse,
-  exportTrigger, exportQuality, onExportComplete, bgColor
+  exportTrigger, exportQuality,
+  onCalculateComplete, onValidateComplete, onExportComplete, 
+  bgColor, lightFillColor
 }) {
   const [wallTex, setWallTex] = useState(null);
   const [sourceImgData, setSourceImgData] = useState(null);
@@ -108,16 +112,16 @@ export default function Scene({
     radius, shapeType, boxWidth, boxDepth, boxCornerRadius, height, thickness, distance,
     imgOffsetX, imgOffsetY, imgScaleX, imgScaleY, imgRotation,
     imgFlipX, imgFlipY, invertShadow,
-    supportType, supportThickness, supportSpacing
+    supportType, supportThickness, supportSpacing, bgColor, imageName, lightFillColor
   });
 
   useEffect(() => {
     paramsRef.current = { 
       radius, shapeType, boxWidth, boxDepth, boxCornerRadius, height, thickness, distance, imgOffsetX, imgOffsetY, 
       imgScaleX, imgScaleY, imgRotation, imgFlipX, imgFlipY, invertShadow,
-      supportType, supportThickness, supportSpacing
+      supportType, supportThickness, supportSpacing, bgColor, imageName, lightFillColor
     };
-  }, [radius, shapeType, boxWidth, boxDepth, boxCornerRadius, height, thickness, distance, imgOffsetX, imgOffsetY, imgScaleX, imgScaleY, imgRotation, imgFlipX, imgFlipY, invertShadow, supportType, supportThickness, supportSpacing]);
+  }, [radius, shapeType, boxWidth, boxDepth, boxCornerRadius, height, thickness, distance, imgOffsetX, imgOffsetY, imgScaleX, imgScaleY, imgRotation, imgFlipX, imgFlipY, invertShadow, supportType, supportThickness, supportSpacing, bgColor, imageName, lightFillColor]);
 
   // Handle Reset 
   useEffect(() => {
@@ -138,12 +142,24 @@ export default function Scene({
       });
       const img = new Image();
       img.onload = () => {
+        let targetW = img.width;
+        let targetH = img.height;
+        
+        const isSvg = uploadedImage.startsWith('data:image/svg+xml');
+        const maxSize = Math.max(targetW || 1, targetH || 1);
+        
+        if (isSvg || maxSize < 2048) {
+             const scale = 2048 / maxSize;
+             targetW = Math.max(1, Math.floor(targetW * scale));
+             targetH = Math.max(1, Math.floor(targetH * scale));
+        }
+
         const c = document.createElement('canvas');
-        c.width = img.width;
-        c.height = img.height;
+        c.width = targetW;
+        c.height = targetH;
         const ctx = c.getContext('2d');
-        ctx.drawImage(img, 0, 0);
-        setSourceImgData(ctx.getImageData(0, 0, c.width, c.height));
+        ctx.drawImage(img, 0, 0, targetW, targetH);
+        setSourceImgData(ctx.getImageData(0, 0, targetW, targetH));
       };
       img.src = uploadedImage;
     } else {
@@ -161,137 +177,143 @@ export default function Scene({
   // 1. CALCULATE HOLES (Triggered by Button 1)
   useEffect(() => {
     if (calculateTrigger === 0 || !sourceImgData) return;
-    console.log("Processing ray-casted geometry & mesh supports...");
+    
+    const generateHoles = async () => {
+      console.log("Processing ray-casted geometry & mesh supports...");
 
-    const p = paramsRef.current;
-    
-    // GENERATE HOLES ALPHA MAP WITH GRID SUPPORTS
-    const W = 1024;
-    const H = 512;
-    const canvas = document.createElement('canvas');
-    canvas.width = W;
-    canvas.height = H;
-    const ctx = canvas.getContext('2d');
-    const alphaData = ctx.createImageData(W, H);
-    
-    const rot = p.imgRotation * Math.PI / 180;
-    const cosR = Math.cos(-rot);
-    const sinR = Math.sin(-rot);
-
-    // Precalculate arc lengths to ensure even support distribution
-    const arcLengths = new Float32Array(W);
-    let totalPerimeter = 0;
-    let prevX = getShapeRadius(0, p.shapeType, p.radius, p.boxWidth, p.boxDepth, p.boxCornerRadius) * Math.sin(0);
-    let prevY = -getShapeRadius(0, p.shapeType, p.radius, p.boxWidth, p.boxDepth, p.boxCornerRadius) * Math.cos(0);
-    
-    for (let u = 1; u <= W; u++) {
-        const uMod = u % W;
-        const theta = (uMod / W) * 2 * Math.PI;
-        const r = getShapeRadius(theta, p.shapeType, p.radius, p.boxWidth, p.boxDepth, p.boxCornerRadius);
-        const px = r * Math.sin(theta);
-        const py = -r * Math.cos(theta);
-        const dx = px - prevX;
-        const dy = py - prevY;
-        totalPerimeter += Math.sqrt(dx*dx + dy*dy);
-        if (u < W) arcLengths[u] = totalPerimeter;
-        prevX = px;
-        prevY = py;
-    }
-    
-    const targetSpacing = p.supportSpacing / 10;
-    const nSupports = Math.max(1, Math.round(totalPerimeter / targetSpacing));
-    const adjustedSpacing = totalPerimeter / nSupports;
-
-    for (let v = 0; v < H; v++) {
-      const normalizedV = 1.0 - (v / H); 
-      const Z = (p.distance - p.height) + (normalizedV * p.height);
+      const p = paramsRef.current;
       
-      for (let u = 0; u < W; u++) {
-        const normalizedU = u / W;
-        const theta = normalizedU * 2 * Math.PI;
-        
-        const currentRadius = getShapeRadius(theta, p.shapeType, p.radius, p.boxWidth, p.boxDepth, p.boxCornerRadius);
-        const P_x = currentRadius * Math.sin(theta);
-        const P_y = -currentRadius * Math.cos(theta);
-        const P_z = Z;
-        
-        let isHole = false;
-        if (P_z > 0.001) { 
-           const k = p.distance / P_z;
-           const W_x = P_x * k;
-           const W_y = P_y * k;
-           
-           const tx = W_x - p.imgOffsetX;
-           const ty = W_y - p.imgOffsetY;
-           const rx = tx * cosR - ty * sinR;
-           const ry = tx * sinR + ty * cosR;
-           const lx = rx / (p.imgScaleX || 1);
-           const ly = ry / (p.imgScaleY || 1);
-           
-           if (lx >= -0.5 && lx <= 0.5 && ly >= -0.5 && ly <= 0.5) {
-              const finalLx = p.imgFlipX ? lx : -lx;
-              const finalLy = p.imgFlipY ? -ly : ly;
-              const pX = (finalLx + 0.5) * sourceImgData.width;
-              const pY = (0.5 - finalLy) * sourceImgData.height;
-              
-              const sampled = getSubpixelValues(sourceImgData, pX, pY);
-              if (sampled.alpha < 128) {
-                 isHole = p.invertShadow ? true : false;
-              } else {
-                 const isDark = sampled.bright < 128;
-                 isHole = p.invertShadow ? !isDark : isDark;
-              }
-           }
-        }
-        
-        if (isHole && p.supportType !== 'none') {
-           const arcLength = u === 0 ? 0 : arcLengths[u];
-           const zPos = (1.0 - (v / H)) * p.height; 
-           const spacing = adjustedSpacing;
-           const thickness = p.supportThickness / 10;
-           
-           let isSupport = false;
+      // GENERATE HOLES ALPHA MAP WITH GRID SUPPORTS
+      const W = 2048;
+      const H = 1024;
+      const canvas = document.createElement('canvas');
+      canvas.width = W;
+      canvas.height = H;
+      const ctx = canvas.getContext('2d');
+      const alphaData = ctx.createImageData(W, H);
+      
+      const rot = p.imgRotation * Math.PI / 180;
+      const cosR = Math.cos(rot);
+      const sinR = Math.sin(rot);
 
-           if (p.supportType === 'vertical' || p.supportType === 'grid') {
-               if (Math.abs(arcLength) % spacing < thickness) isSupport = true;
-           }
-           if (p.supportType === 'horizontal' || p.supportType === 'grid') {
-               if (Math.abs(zPos) % spacing < thickness) isSupport = true;
-           }
-           if (p.supportType === 'diagonal_45' || p.supportType === 'diagonal_cross') {
-               const d = (arcLength * 0.7071 - zPos * 0.7071);
-               if (Math.abs(d) % spacing < thickness) isSupport = true;
-           }
-           if (p.supportType === 'diagonal_neg45' || p.supportType === 'diagonal_cross') {
-               const d = (arcLength * 0.7071 + zPos * 0.7071);
-               if (Math.abs(d) % spacing < thickness) isSupport = true;
-           }
-
-           if (isSupport) {
-              isHole = false;
-           }
-           
-           const rimSize = Math.max(2, Math.floor((10 / 512) * H));
-           if (v < rimSize || v > H - rimSize) {
-              isHole = false;
-           }
-        }
-        
-        const outIdx = (v * W + u) * 4;
-        alphaData.data[outIdx] = 255;
-        alphaData.data[outIdx+1] = 255;
-        alphaData.data[outIdx+2] = 255;
-        alphaData.data[outIdx+3] = isHole ? 0 : 255; 
+      // Precalculate arc lengths to ensure even support distribution
+      const arcLengths = new Float32Array(W);
+      let totalPerimeter = 0;
+      let prevX = getShapeRadius(0, p.shapeType, p.radius, p.boxWidth, p.boxDepth, p.boxCornerRadius) * Math.sin(0);
+      let prevY = -getShapeRadius(0, p.shapeType, p.radius, p.boxWidth, p.boxDepth, p.boxCornerRadius) * Math.cos(0);
+      
+      for (let u = 1; u <= W; u++) {
+          const uMod = u % W;
+          const theta = (uMod / W) * 2 * Math.PI;
+          const r = getShapeRadius(theta, p.shapeType, p.radius, p.boxWidth, p.boxDepth, p.boxCornerRadius);
+          const px = r * Math.sin(theta);
+          const py = -r * Math.cos(theta);
+          const dx = px - prevX;
+          const dy = py - prevY;
+          totalPerimeter += Math.sqrt(dx*dx + dy*dy);
+          if (u < W) arcLengths[u] = totalPerimeter;
+          prevX = px;
+          prevY = py;
       }
-    }
+      
+      const targetSpacing = p.supportSpacing / 10;
+      const nSupports = Math.max(1, Math.round(totalPerimeter / targetSpacing));
+      const adjustedSpacing = totalPerimeter / nSupports;
 
-    ctx.putImageData(alphaData, 0, 0);
-    const tex = new THREE.CanvasTexture(canvas);
-    tex.wrapS = THREE.RepeatWrapping;
-    setCylinderAlphaMap(tex);
-    
-    alphaDataRef.current = alphaData; // Save for validation step
-    
+      for (let v = 0; v < H; v++) {
+        if (v > 0 && v % 64 === 0) await yieldToMain();
+        const normalizedV = 1.0 - (v / H); 
+        const Z = (p.distance - p.height) + (normalizedV * p.height);
+        
+        for (let u = 0; u < W; u++) {
+          const normalizedU = u / W;
+          const theta = normalizedU * 2 * Math.PI;
+          
+          const currentRadius = getShapeRadius(theta, p.shapeType, p.radius, p.boxWidth, p.boxDepth, p.boxCornerRadius);
+          const P_x = currentRadius * Math.sin(theta);
+          const P_y = -currentRadius * Math.cos(theta);
+          const P_z = Z;
+          
+          let isHole = false;
+          if (P_z > 0.001) { 
+             const k = p.distance / P_z;
+             const W_x = P_x * k;
+             const W_y = P_y * k;
+             
+             const tx = W_x - p.imgOffsetX;
+             const ty = W_y - p.imgOffsetY;
+             const rx = tx * cosR - ty * sinR;
+             const ry = tx * sinR + ty * cosR;
+             const lx = rx / (p.imgScaleX || 1);
+             const ly = ry / (p.imgScaleY || 1);
+             
+             let pixelBright = p.bgColor === '#ffffff' ? 255 : 0;
+             if (lx >= -0.5 && lx <= 0.5 && ly >= -0.5 && ly <= 0.5) {
+                const finalLx = p.imgFlipX ? lx : -lx;
+                const finalLy = p.imgFlipY ? -ly : ly;
+                const pX = (finalLx + 0.5) * sourceImgData.width;
+                const pY = (0.5 - finalLy) * sourceImgData.height;
+                
+                const sampled = getSubpixelValues(sourceImgData, pX, pY);
+                const bgBright = p.bgColor === '#ffffff' ? 255 : 0;
+                pixelBright = (sampled.bright * (sampled.alpha / 255)) + (bgBright * ((255 - sampled.alpha) / 255));
+             }
+             const isDark = pixelBright < 128;
+             isHole = p.invertShadow ? !isDark : isDark;
+          }
+          
+          if (isHole && p.supportType !== 'none') {
+             const arcLength = u === 0 ? 0 : arcLengths[u];
+             const zPos = (1.0 - (v / H)) * p.height; 
+             const spacing = adjustedSpacing;
+             const thickness = p.supportThickness / 10;
+             
+             let isSupport = false;
+
+             if (p.supportType === 'vertical' || p.supportType === 'grid') {
+                 if (Math.abs(arcLength) % spacing < thickness) isSupport = true;
+             }
+             if (p.supportType === 'horizontal' || p.supportType === 'grid') {
+                 if (Math.abs(zPos) % spacing < thickness) isSupport = true;
+             }
+             if (p.supportType === 'diagonal_45' || p.supportType === 'diagonal_cross') {
+                 const d = (arcLength * 0.7071 - zPos * 0.7071);
+                 if (Math.abs(d) % spacing < thickness) isSupport = true;
+             }
+             if (p.supportType === 'diagonal_neg45' || p.supportType === 'diagonal_cross') {
+                 const d = (arcLength * 0.7071 + zPos * 0.7071);
+                 if (Math.abs(d) % spacing < thickness) isSupport = true;
+             }
+
+             if (isSupport) {
+                isHole = false;
+             }
+             
+             const rimSize = Math.max(2, Math.floor((10 / 512) * H));
+             if (v < rimSize || v > H - rimSize) {
+                isHole = false;
+             }
+          }
+          
+          const outIdx = (v * W + u) * 4;
+          alphaData.data[outIdx] = 255;
+          alphaData.data[outIdx+1] = 255;
+          alphaData.data[outIdx+2] = 255;
+          alphaData.data[outIdx+3] = isHole ? 0 : 255; 
+        }
+      }
+
+      ctx.putImageData(alphaData, 0, 0);
+      const tex = new THREE.CanvasTexture(canvas);
+      tex.wrapS = THREE.RepeatWrapping;
+      setCylinderAlphaMap(tex);
+      
+      alphaDataRef.current = alphaData; // Save for validation step
+      
+      if (onCalculateComplete) onCalculateComplete();
+    };
+
+    generateHoles();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [calculateTrigger]); 
 
@@ -304,103 +326,114 @@ export default function Scene({
         return;
     }
     
-    console.log("Generating forward ray-trace blueprint...");
-    const p = paramsRef.current;
-    const alphaData = alphaDataRef.current;
-    const W = 1024;
-    const H = 512;
+    const generateValidation = async () => {
+      console.log("Generating forward ray-trace blueprint...");
+      const p = paramsRef.current;
+      const alphaData = alphaDataRef.current;
+      const W = 2048;
+      const H = 1024;
 
-    const VW = 512;
-    const VH = 512;
-    const vCanvas = document.createElement('canvas');
-    vCanvas.width = VW;
-    vCanvas.height = VH;
-    const vCtx = vCanvas.getContext('2d');
-    const vData = vCtx.createImageData(VW, VH);
-    
-    // 0 = Light, 1 = Solid Shadow
-    const shadowGrid = new Uint8Array(VW * VH);
+      const VW = 512;
+      const VH = 512;
+      const vCanvas = document.createElement('canvas');
+      vCanvas.width = VW;
+      vCanvas.height = VH;
+      const vCtx = vCanvas.getContext('2d');
+      const vData = vCtx.createImageData(VW, VH);
+      
+      let rFill = 0, gFill = 200, bFill = 255;
+      if (p.lightFillColor === 'yellow') { rFill=255; gFill=230; bFill=100; }
+      else if (p.lightFillColor === 'white') { rFill=255; gFill=255; bFill=255; }
 
-    for (let y_w = 0; y_w < VH; y_w++) {
-      for (let x_w = 0; x_w < VW; x_w++) {
-        const X = ((x_w / VW) - 0.5) * 100;
+      // 0 = Light, 1 = Solid Shadow
+      const shadowGrid = new Uint8Array(VW * VH);
+
+      for (let y_w = 0; y_w < VH; y_w++) {
+        if (y_w > 0 && y_w % 32 === 0) await yieldToMain();
         const Y = (0.5 - (y_w / VH)) * 100;
-        
-        const dist2 = X*X + Y*Y;
-        if (dist2 === 0) continue;
-        
-        let theta = Math.atan2(X / Math.sqrt(dist2), -Y / Math.sqrt(dist2));
-        if (theta < 0) theta += 2 * Math.PI;
-        
-        const currentRadius = getShapeRadius(theta, p.shapeType, p.radius, p.boxWidth, p.boxDepth, p.boxCornerRadius);
-        const k = currentRadius / Math.sqrt(dist2);
-        const Z_cyl = k * p.distance;
-        
-        let isSolid = false;
-        if (Z_cyl >= p.distance - p.height && Z_cyl <= p.distance) {
-           const v_uv = H * (p.distance - Z_cyl) / p.height;
-           if (v_uv >= 0 && v_uv < H) {
-              const u_uv = (theta / (2 * Math.PI)) * W;
-              
-              if (u_uv >= 0 && u_uv < W) {
-                const aIdx = (Math.floor(v_uv) * W + Math.floor(u_uv)) * 4 + 3;
-                if (alphaData.data[aIdx] > 128) {
-                   isSolid = true;
+        for (let x_w = 0; x_w < VW; x_w++) {
+          const X = ((x_w / VW) - 0.5) * 100;
+          const dist2 = X*X + Y*Y;
+          if (dist2 === 0) continue;
+          
+          let theta = Math.atan2(X / Math.sqrt(dist2), -Y / Math.sqrt(dist2));
+          if (theta < 0) theta += 2 * Math.PI;
+          
+          const currentRadius = getShapeRadius(theta, p.shapeType, p.radius, p.boxWidth, p.boxDepth, p.boxCornerRadius);
+          const k = currentRadius / Math.sqrt(dist2);
+          const Z_cyl = k * p.distance;
+          
+          let isSolid = false;
+          if (Z_cyl >= p.distance - p.height && Z_cyl <= p.distance) {
+             const v_uv = H * (p.distance - Z_cyl) / p.height;
+             if (v_uv >= 0 && v_uv < H) {
+                const u_uv = (theta / (2 * Math.PI)) * W;
+                if (u_uv >= 0 && u_uv < W) {
+                  const aIdx = (Math.floor(v_uv) * W + Math.floor(u_uv)) * 4 + 3;
+                  if (alphaData.data[aIdx] > 128) {
+                     isSolid = true;
+                  }
                 }
-              }
+             }
+          }
+          shadowGrid[y_w * VW + x_w] = isSolid ? 1 : 0;
+        }
+      }
+
+      // Edge Detection for Contour and light fill
+      for (let y = 1; y < VH - 1; y++) {
+        if (y > 0 && y % 32 === 0) await yieldToMain();
+        for (let x = 1; x < VW - 1; x++) {
+           const idx = y * VW + x;
+           const isShadow = shadowGrid[idx];
+           const pixelIdx = idx * 4;
+           if (!isShadow) {
+             // check neighbors
+             const nShadow = shadowGrid[idx - 1] || shadowGrid[idx + 1] || shadowGrid[idx - VW] || shadowGrid[idx + VW];
+             vData.data[pixelIdx] = rFill;     // R
+             vData.data[pixelIdx+1] = gFill;   // G
+             vData.data[pixelIdx+2] = bFill;   // B
+             if (nShadow) {
+                vData.data[pixelIdx+3] = 255;     // A (Neon Edge)
+             } else {
+                vData.data[pixelIdx+3] = 120;     // Semi-transparent interior fill
+             }
+           } else {
+             vData.data[pixelIdx+3] = 0; 
            }
         }
-        shadowGrid[y_w * VW + x_w] = isSolid ? 1 : 0;
       }
-    }
 
-    // Edge Detection for Blue Contour
-    for (let y = 1; y < VH - 1; y++) {
-      for (let x = 1; x < VW - 1; x++) {
-         const idx = y * VW + x;
-         const isShadow = shadowGrid[idx];
-         if (!isShadow) {
-           // check neighbors
-           const nShadow = shadowGrid[idx - 1] || shadowGrid[idx + 1] || shadowGrid[idx - VW] || shadowGrid[idx + VW];
-           const pixelIdx = idx * 4;
-           if (nShadow) {
-              vData.data[pixelIdx] = 0;     // R
-              vData.data[pixelIdx+1] = 200; // G
-              vData.data[pixelIdx+2] = 255; // B
-              vData.data[pixelIdx+3] = 255; // A (Neon Blue Edge)
-           } else {
-              vData.data[pixelIdx+3] = 0;   // Transparent
+      // Box Blur the edge detection for smoother contour line preview
+      const tempRaw = new Uint8Array(vData.data);
+      for (let y = 1; y < VH - 1; y++) {
+        if (y > 0 && y % 32 === 0) await yieldToMain();
+        for (let x = 1; x < VW - 1; x++) {
+           const idx = (y * VW + x) * 4;
+           let sumAlpha = 0;
+           for(let dy=-1; dy<=1; dy++) {
+              for(let dx=-1; dx<=1; dx++) {
+                 sumAlpha += tempRaw[((y+dy) * VW + (x+dx)) * 4 + 3];
+              }
            }
-         } else {
-           vData.data[idx * 4 + 3] = 0; 
-         }
+           vData.data[idx+3] = sumAlpha / 9;
+           // Recolor based on blurred alpha
+           if (vData.data[idx+3] > 0) {
+              vData.data[idx] = Math.max(0, rFill - 20);
+              vData.data[idx+1] = Math.max(0, gFill - 20);
+              vData.data[idx+2] = Math.max(0, bFill - 20);
+           }
+        }
       }
-    }
 
-    // Box Blur the edge detection for smoother contour line preview
-    const tempRaw = new Uint8Array(vData.data);
-    for (let y = 1; y < VH - 1; y++) {
-      for (let x = 1; x < VW - 1; x++) {
-         const idx = (y * VW + x) * 4;
-         let sumAlpha = 0;
-         for(let dy=-1; dy<=1; dy++) {
-            for(let dx=-1; dx<=1; dx++) {
-               sumAlpha += tempRaw[((y+dy) * VW + (x+dx)) * 4 + 3];
-            }
-         }
-         vData.data[idx+3] = sumAlpha / 9;
-         // Recolor based on blurred alpha
-         if (vData.data[idx+3] > 0) {
-            vData.data[idx] = 0;
-            vData.data[idx+1] = 160;
-            vData.data[idx+2] = 255;
-         }
-      }
-    }
+      vCtx.putImageData(vData, 0, 0);
+      const vTex = new THREE.CanvasTexture(vCanvas);
+      setValidationMap(vTex);
+      
+      if (onValidateComplete) onValidateComplete();
+    };
 
-    vCtx.putImageData(vData, 0, 0);
-    const vTex = new THREE.CanvasTexture(vCanvas);
-    setValidationMap(vTex);
+    generateValidation();
     
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [validateTrigger]);
@@ -409,8 +442,7 @@ export default function Scene({
   useEffect(() => {
     if (exportTrigger === 0) return;
     
-    // We run in a small timeout to let React render the loading UI
-    setTimeout(() => {
+    const generateExport = async () => {
       try {
         console.log("Generating STL with quality:", exportQuality);
         const p = paramsRef.current;
@@ -421,8 +453,8 @@ export default function Scene({
         // --- STEP 1: Compute Solid Grid ---
         const grid = new Uint8Array(W * H);
         const rot = p.imgRotation * Math.PI / 180;
-        const cosR = Math.cos(-rot);
-        const sinR = Math.sin(-rot);
+        const cosR = Math.cos(rot);
+        const sinR = Math.sin(rot);
         
         // Precalculate arc lengths to ensure even support distribution
         const arcLengths = new Float32Array(W);
@@ -449,6 +481,7 @@ export default function Scene({
         const adjustedSpacing = totalPerimeter / nSupports;
 
         for (let v = 0; v < H; v++) {
+          if (v > 0 && v % 16 === 0) await yieldToMain();
           const normalizedV = 1.0 - (v / H); 
           const Z = (p.distance - p.height) + (normalizedV * p.height);
           
@@ -470,19 +503,18 @@ export default function Scene({
                const lx = rx / (p.imgScaleX || 1);
                const ly = ry / (p.imgScaleY || 1);
                
+               let pixelBright = p.bgColor === '#ffffff' ? 255 : 0;
                if (lx >= -0.5 && lx <= 0.5 && ly >= -0.5 && ly <= 0.5) {
                   const finalLx = p.imgFlipX ? lx : -lx;
                   const finalLy = p.imgFlipY ? -ly : ly;
                   const pX = (finalLx + 0.5) * sourceImgData.width;
                   const pY = (0.5 - finalLy) * sourceImgData.height;
                   const sampled = getSubpixelValues(sourceImgData, pX, pY);
-                  if (sampled.alpha < 128) {
-                     isHole = p.invertShadow ? true : false;
-                  } else {
-                     const isDark = sampled.bright < 128;
-                     isHole = p.invertShadow ? !isDark : isDark;
-                  }
+                  const bgBright = p.bgColor === '#ffffff' ? 255 : 0;
+                  pixelBright = (sampled.bright * (sampled.alpha / 255)) + (bgBright * ((255 - sampled.alpha) / 255));
                }
+               const isDark = pixelBright < 128;
+               isHole = p.invertShadow ? !isDark : isDark;
             }
             
             if (isHole && p.supportType !== 'none') {
@@ -555,6 +587,7 @@ export default function Scene({
         };
 
         for (let v = 0; v < H; v++) {
+           if (v > 0 && v % 16 === 0) await yieldToMain();
            const v1 = 1.0 - (v / H);
            const v2 = 1.0 - ((v + 1) / H);
            const z_bot = (p.distance - p.height) + (v1 * p.height); // larger Z
@@ -667,6 +700,7 @@ export default function Scene({
             const newPos = new Float32Array(posArray.length);
             
             for (let iter=0; iter<smoothingIter; iter++) {
+                await yieldToMain();
                 for(let i=0; i<vertexCount; i++) {
                     const nbrs = [...new Set(neighbors[i])];
                     if (nbrs.length === 0) {
@@ -744,11 +778,20 @@ export default function Scene({
         const exporter = new STLExporter();
         const stlString = exporter.parse(group);
         
+        const defaultName = `lamp_${p.imageName}_${p.distance}cm`;
+        const fileName = window.prompt("Introduce el nombre del archivo STL a exportar:", defaultName);
+        
+        if (fileName === null) {
+           return;
+        }
+
+        const safeFileName = fileName.endsWith('.stl') ? fileName : `${fileName}.stl`;
+        
         const blob = new Blob([stlString], { type: 'text/plain' });
         const link = document.createElement('a');
         link.style.display = 'none';
         link.href = URL.createObjectURL(blob);
-        link.download = 'lampara_sombra.stl';
+        link.download = safeFileName;
         document.body.appendChild(link);
         link.click();
         document.body.removeChild(link);
@@ -759,7 +802,9 @@ export default function Scene({
       } finally {
          if (onExportComplete) onExportComplete();
       }
-    }, 150);
+    };
+
+    generateExport();
     
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [exportTrigger]);
@@ -768,7 +813,7 @@ export default function Scene({
   const currentAlphaTest = cylinderAlphaMap ? 0.5 : 0;
 
   const morphCylinder = (inner) => {
-    const geo = new THREE.CylinderGeometry(1, 1, height, 128, 1, true);
+    const geo = new THREE.CylinderGeometry(1, 1, height, 360, 1, true);
     const pos = geo.attributes.position.array;
     const thk = inner ? thickness : 0;
     const w = boxWidth - 2 * thk;
@@ -790,7 +835,7 @@ export default function Scene({
   };
 
   const morphBaseCap = () => {
-    const geo = new THREE.CylinderGeometry(1, 1, thickness, 128, 1, false);
+    const geo = new THREE.CylinderGeometry(1, 1, thickness, 360, 1, false);
     const pos = geo.attributes.position.array;
     for (let i = 0; i < pos.length; i += 3) {
       const bx = pos[i], bz = pos[i+2];
@@ -807,7 +852,7 @@ export default function Scene({
   };
 
   const morphRing = () => {
-    const geo = new THREE.RingGeometry(0.5, 1.0, 128);
+    const geo = new THREE.RingGeometry(0.5, 1.0, 360);
     const pos = geo.attributes.position.array;
     const thk = thickness;
     const w = boxWidth - 2 * thk;
