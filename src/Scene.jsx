@@ -564,7 +564,7 @@ export default function Scene({
 
 
 
-        // --- STEP 2: Surface Nets / Displacement Calculation ---
+        // --- STEP 2: Feature-preserving boundary displacement ---
         const isSolid = (u_idx, v_idx) => {
            if (v_idx < 0 || v_idx >= H) return false;
            let wrapU = u_idx % W;
@@ -572,63 +572,80 @@ export default function Scene({
            return grid[v_idx * W + wrapU] === 1;
         };
 
-        const isCornerMixed = (u, v) => {
-           let solidCount = 0;
-           if (isSolid(u-1, v-1)) solidCount++;
-           if (isSolid(u, v-1)) solidCount++;
-           if (isSolid(u-1, v)) solidCount++;
-           if (isSolid(u, v)) solidCount++;
-           return solidCount > 0 && solidCount < 4;
-        };
-
+        // bounds[v*W+u] = 1 if this grid corner is on a solid/hole boundary
+        // pinned[v*W+u] = 1 if this corner must NOT be displaced (real image corner)
+        //
+        // Semantic rule based on the 4 cells surrounding each boundary corner:
+        //   solidCount = 2, diagonal pattern → staircase aliasing artifact → smooth it
+        //   solidCount = 1 or 3            → real corner/convex or concave tip → pin it
+        //
+        // This preserves sharp 90° turns and pointed tips while anti-aliasing
+        // diagonal/curved edges.
         const bounds = new Uint8Array(W * (H + 1));
+        const pinned = new Uint8Array(W * (H + 1));
+
         for (let v = 0; v <= H; v++) {
             if (v % 32 === 0) await yieldToMain();
             for (let u = 0; u < W; u++) {
-                if (isCornerMixed(u, v)) {
-                    bounds[v * W + u] = 1;
+                const tl = isSolid(u-1, v-1) ? 1 : 0;
+                const tr = isSolid(u,   v-1) ? 1 : 0;
+                const bl = isSolid(u-1, v)   ? 1 : 0;
+                const br = isSolid(u,   v)   ? 1 : 0;
+                const solidCount = tl + tr + bl + br;
+                if (solidCount === 0 || solidCount === 4) continue; // not a boundary
+                bounds[v * W + u] = 1;
+                // solidCount 1 or 3 = real image corner → pin
+                // solidCount 2 diagonal (tl+br=2 or tr+bl=2) = staircase → smooth
+                if (solidCount !== 2) {
+                    pinned[v * W + u] = 1;
+                } else {
+                    // solidCount=2: check if the two solids are ADJACENT (straight edge)
+                    // Adjacent means same row or same column → also not a diagonal staircase corner
+                    const isHorizontalEdge = (tl === tr && bl === br); // solids side by side horizontally
+                    const isVerticalEdge   = (tl === bl && tr === br); // solids side by side vertically
+                    if (isHorizontalEdge || isVerticalEdge) {
+                        // straight horizontal/vertical edge midpoint: can smooth, don't pin
+                    } else {
+                        // diagonal staircase corner: smooth (don't pin)
+                    }
+                    // Both cases: solidCount=2 → do NOT pin
                 }
             }
         }
 
         const dispU = new Float32Array(W * (H + 1));
         const dispV = new Float32Array(W * (H + 1));
-        let smoothIters = exportQuality === 'high' ? 30 : exportQuality === 'ultra' ? 60 : exportQuality === 'medium' ? 15 : 4;
-        
+        // Fewer iterations to prevent over-smoothing across long straight edges
+        // 4-connectivity only (no diagonals) keeps smoothing local and stable
+        const smoothIters = exportQuality === 'high' ? 12 : exportQuality === 'medium' ? 6 : 3;
+
         for (let iter = 0; iter < smoothIters; iter++) {
             await yieldToMain();
             const tempU = new Float32Array(dispU);
             const tempV = new Float32Array(dispV);
             for (let v = 0; v <= H; v++) {
                 for (let u = 0; u < W; u++) {
-                    if (bounds[v * W + u]) {
-                        let sumU = 0, sumV = 0, count = 0;
-                        const checkNeighbor = (nu, nv) => {
-                            if (nv >= 0 && nv <= H) {
-                                let wrapU = nu % W;
-                                if (wrapU < 0) wrapU += W;
-                                if (bounds[nv * W + wrapU]) {
-                                    sumU += (nu - u) + dispU[nv * W + wrapU];
-                                    sumV += (nv - v) + dispV[nv * W + wrapU];
-                                    count++;
-                                }
-                            }
-                        };
-                        checkNeighbor(u-1, v);
-                        checkNeighbor(u+1, v);
-                        checkNeighbor(u, v-1);
-                        checkNeighbor(u, v+1);
-                        checkNeighbor(u-1, v-1);
-                        checkNeighbor(u+1, v-1);
-                        checkNeighbor(u-1, v+1);
-                        checkNeighbor(u+1, v+1);
-                        
-                        if (count > 0) {
-                            tempU[v * W + u] = sumU / count;
-                            if (v > 0 && v < H) {
-                                tempV[v * W + u] = sumV / count;
+                    if (!bounds[v * W + u] || pinned[v * W + u]) continue;
+                    let sumU = 0, sumV = 0, count = 0;
+                    const checkNeighbor = (nu, nv) => {
+                        if (nv >= 0 && nv <= H) {
+                            let wu = nu % W;
+                            if (wu < 0) wu += W;
+                            if (bounds[nv * W + wu]) {
+                                sumU += (nu - u) + dispU[nv * W + wu];
+                                sumV += (nv - v) + dispV[nv * W + wu];
+                                count++;
                             }
                         }
+                    };
+                    // 4-connectivity only: prevents diagonal shortcuts that round corners
+                    checkNeighbor(u-1, v);
+                    checkNeighbor(u+1, v);
+                    checkNeighbor(u, v-1);
+                    checkNeighbor(u, v+1);
+                    if (count > 0) {
+                        tempU[v * W + u] = sumU / count;
+                        if (v > 0 && v < H) tempV[v * W + u] = sumV / count;
                     }
                 }
             }
