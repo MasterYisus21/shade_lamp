@@ -446,9 +446,9 @@ export default function Scene({
       try {
         console.log("Generating STL with quality:", exportQuality);
         const p = paramsRef.current;
-        let W = 512, H = 256;
-        if (exportQuality === 'low') { W = 256; H = 128; }
-        if (exportQuality === 'high') { W = 1024; H = 512; }
+        let W = 1024, H = 512;
+        if (exportQuality === 'low') { W = 512; H = 256; }
+        if (exportQuality === 'high') { W = 2048; H = 1024; }
         
         // --- STEP 1: Compute Solid Grid ---
         const grid = new Uint8Array(W * H);
@@ -480,40 +480,48 @@ export default function Scene({
         const nSupports = Math.max(1, Math.round(totalPerimeter / targetSpacing));
         const adjustedSpacing = totalPerimeter / nSupports;
 
+        // Helper: sample image brightness at a fractional grid position (u, v)
+        // Returns average brightness 0-255 using 2x2 supersampling within the cell
+        const sampleBrightAt = (su, sv) => {
+          const bgBright = p.bgColor === '#ffffff' ? 255 : 0;
+          const nV = 1.0 - (sv / H);
+          const Z = (p.distance - p.height) + (nV * p.height);
+          if (Z <= 0.001 || !sourceImgData) return bgBright;
+          const theta = (su / W) * 2 * Math.PI;
+          const cr = getShapeRadius(theta, p.shapeType, p.radius, p.boxWidth, p.boxDepth, p.boxCornerRadius);
+          const Px = cr * Math.sin(theta);
+          const Py = -cr * Math.cos(theta);
+          const k = p.distance / Z;
+          const tx = (Px * k) - p.imgOffsetX;
+          const ty = (Py * k) - p.imgOffsetY;
+          const rx = tx * cosR - ty * sinR;
+          const ry = tx * sinR + ty * cosR;
+          const lx = rx / (p.imgScaleX || 1);
+          const ly = ry / (p.imgScaleY || 1);
+          if (lx < -0.5 || lx > 0.5 || ly < -0.5 || ly > 0.5) return bgBright;
+          const finalLx = p.imgFlipX ? lx : -lx;
+          const finalLy = p.imgFlipY ? -ly : ly;
+          const pX = (finalLx + 0.5) * sourceImgData.width;
+          const pY = (0.5 - finalLy) * sourceImgData.height;
+          const s = getSubpixelValues(sourceImgData, pX, pY);
+          return (s.bright * (s.alpha / 255)) + (bgBright * ((255 - s.alpha) / 255));
+        };
+
         for (let v = 0; v < H; v++) {
           if (v > 0 && v % 16 === 0) await yieldToMain();
-          const normalizedV = 1.0 - (v / H); 
-          const Z = (p.distance - p.height) + (normalizedV * p.height);
-          
+
           for (let u = 0; u < W; u++) {
-            const normalizedU = u / W;
-            const theta = normalizedU * 2 * Math.PI;
-            const currentRadius = getShapeRadius(theta, p.shapeType, p.radius, p.boxWidth, p.boxDepth, p.boxCornerRadius);
-            const P_x = currentRadius * Math.sin(theta);
-            const P_y = -currentRadius * Math.cos(theta);
-            const P_z = Z;
-            
+            // 2×2 supersampling: average brightness from 4 sub-pixel offsets inside the cell
+            // This positions the solid/hole boundary at sub-pixel accuracy
+            const b00 = sampleBrightAt(u + 0.25, v + 0.25);
+            const b10 = sampleBrightAt(u + 0.75, v + 0.25);
+            const b01 = sampleBrightAt(u + 0.25, v + 0.75);
+            const b11 = sampleBrightAt(u + 0.75, v + 0.75);
+            const avgBright = (b00 + b10 + b01 + b11) * 0.25;
+
             let isHole = false;
-            if (P_z > 0.001 && sourceImgData) { 
-               const k = p.distance / P_z;
-               const tx = (P_x * k) - p.imgOffsetX;
-               const ty = (P_y * k) - p.imgOffsetY;
-               const rx = tx * cosR - ty * sinR;
-               const ry = tx * sinR + ty * cosR;
-               const lx = rx / (p.imgScaleX || 1);
-               const ly = ry / (p.imgScaleY || 1);
-               
-               let pixelBright = p.bgColor === '#ffffff' ? 255 : 0;
-               if (lx >= -0.5 && lx <= 0.5 && ly >= -0.5 && ly <= 0.5) {
-                  const finalLx = p.imgFlipX ? lx : -lx;
-                  const finalLy = p.imgFlipY ? -ly : ly;
-                  const pX = (finalLx + 0.5) * sourceImgData.width;
-                  const pY = (0.5 - finalLy) * sourceImgData.height;
-                  const sampled = getSubpixelValues(sourceImgData, pX, pY);
-                  const bgBright = p.bgColor === '#ffffff' ? 255 : 0;
-                  pixelBright = (sampled.bright * (sampled.alpha / 255)) + (bgBright * ((255 - sampled.alpha) / 255));
-               }
-               const isDark = pixelBright < 128;
+            {
+               const isDark = avgBright < 128;
                isHole = p.invertShadow ? !isDark : isDark;
             }
             
@@ -554,7 +562,81 @@ export default function Scene({
           }
         }
 
-        // --- STEP 2: Voxel Mesh Generation ---
+
+
+        // --- STEP 2: Surface Nets / Displacement Calculation ---
+        const isSolid = (u_idx, v_idx) => {
+           if (v_idx < 0 || v_idx >= H) return false;
+           let wrapU = u_idx % W;
+           if (wrapU < 0) wrapU += W;
+           return grid[v_idx * W + wrapU] === 1;
+        };
+
+        const isCornerMixed = (u, v) => {
+           let solidCount = 0;
+           if (isSolid(u-1, v-1)) solidCount++;
+           if (isSolid(u, v-1)) solidCount++;
+           if (isSolid(u-1, v)) solidCount++;
+           if (isSolid(u, v)) solidCount++;
+           return solidCount > 0 && solidCount < 4;
+        };
+
+        const bounds = new Uint8Array(W * (H + 1));
+        for (let v = 0; v <= H; v++) {
+            if (v % 32 === 0) await yieldToMain();
+            for (let u = 0; u < W; u++) {
+                if (isCornerMixed(u, v)) {
+                    bounds[v * W + u] = 1;
+                }
+            }
+        }
+
+        const dispU = new Float32Array(W * (H + 1));
+        const dispV = new Float32Array(W * (H + 1));
+        let smoothIters = exportQuality === 'high' ? 30 : exportQuality === 'ultra' ? 60 : exportQuality === 'medium' ? 15 : 4;
+        
+        for (let iter = 0; iter < smoothIters; iter++) {
+            await yieldToMain();
+            const tempU = new Float32Array(dispU);
+            const tempV = new Float32Array(dispV);
+            for (let v = 0; v <= H; v++) {
+                for (let u = 0; u < W; u++) {
+                    if (bounds[v * W + u]) {
+                        let sumU = 0, sumV = 0, count = 0;
+                        const checkNeighbor = (nu, nv) => {
+                            if (nv >= 0 && nv <= H) {
+                                let wrapU = nu % W;
+                                if (wrapU < 0) wrapU += W;
+                                if (bounds[nv * W + wrapU]) {
+                                    sumU += (nu - u) + dispU[nv * W + wrapU];
+                                    sumV += (nv - v) + dispV[nv * W + wrapU];
+                                    count++;
+                                }
+                            }
+                        };
+                        checkNeighbor(u-1, v);
+                        checkNeighbor(u+1, v);
+                        checkNeighbor(u, v-1);
+                        checkNeighbor(u, v+1);
+                        checkNeighbor(u-1, v-1);
+                        checkNeighbor(u+1, v-1);
+                        checkNeighbor(u-1, v+1);
+                        checkNeighbor(u+1, v+1);
+                        
+                        if (count > 0) {
+                            tempU[v * W + u] = sumU / count;
+                            if (v > 0 && v < H) {
+                                tempV[v * W + u] = sumV / count;
+                            }
+                        }
+                    }
+                }
+            }
+            dispU.set(tempU);
+            dispV.set(tempV);
+        }
+
+        // --- STEP 3: Voxel Mesh Generation with Displacements ---
         const vertices = [];
         
         const pushQuad = (p1, p2, p3, p4) => {
@@ -579,79 +661,81 @@ export default function Scene({
            let r = getShapeRadius(th, p.shapeType, p.radius, p.boxWidth, p.boxDepth, p.boxCornerRadius);
            return [r * Math.sin(th), -r * Math.cos(th), z_out];
         };
-        const isSolid = (u_idx, v_idx) => {
-           if (v_idx < 0 || v_idx >= H) return false;
-           let wrapU = u_idx % W;
+        const getVoxelCorner = (u, v, inner) => {
+           let wrapU = u % W;
            if (wrapU < 0) wrapU += W;
-           return grid[v_idx * W + wrapU] === 1;
+           let final_u = u + dispU[v * W + wrapU];
+           let final_v = v + dispV[v * W + wrapU];
+           
+           const theta = (final_u / W) * 2 * Math.PI;
+           const z_norm = 1.0 - (final_v / H);
+           const z_out = (p.distance - p.height) + (z_norm * p.height);
+           
+           if (inner) return getPosInner(theta, z_out);
+           return getPosOuter(theta, z_out);
         };
+
+        const getOuter = (u, v) => getVoxelCorner(u, v, false);
+        const getInner = (u, v) => getVoxelCorner(u, v, true);
 
         for (let v = 0; v < H; v++) {
            if (v > 0 && v % 16 === 0) await yieldToMain();
-           const v1 = 1.0 - (v / H);
-           const v2 = 1.0 - ((v + 1) / H);
-           const z_bot = (p.distance - p.height) + (v1 * p.height); // larger Z
-           const z_top = (p.distance - p.height) + (v2 * p.height); // smaller Z
-
            for (let u = 0; u < W; u++) {
               if (grid[v * W + u] === 0) continue; // Skip holes
 
-              const theta1 = (u / W) * 2 * Math.PI;
-              const theta2 = ((u + 1) / W) * 2 * Math.PI;
-
               // Outer Face (+r)
               pushQuad(
-                 getPosOuter(theta1, z_bot),
-                 getPosOuter(theta1, z_top),
-                 getPosOuter(theta2, z_top),
-                 getPosOuter(theta2, z_bot)
+                 getOuter(u, v),
+                 getOuter(u, v+1),
+                 getOuter(u+1, v+1),
+                 getOuter(u+1, v)
               );
 
               // Inner Face (-r)
               pushQuad(
-                 getPosInner(theta2, z_bot),
-                 getPosInner(theta2, z_top),
-                 getPosInner(theta1, z_top),
-                 getPosInner(theta1, z_bot)
+                 getInner(u+1, v),
+                 getInner(u+1, v+1),
+                 getInner(u, v+1),
+                 getInner(u, v)
               );
 
-              // Bottom face (+z) -> v decreased
+              // Bottom face (+z) -> borders v and v-1 (uses (u, v) and (u+1, v) corners)
               if (!isSolid(u, v - 1)) {
                  pushQuad(
-                    getPosOuter(theta1, z_bot),
-                    getPosOuter(theta2, z_bot),
-                    getPosInner(theta2, z_bot),
-                    getPosInner(theta1, z_bot)
+                    getOuter(u, v),
+                    getOuter(u+1, v),
+                    getInner(u+1, v),
+                    getInner(u, v)
                  );
               }
 
-              // Top face (-z) -> v increased
+              // Top face (-z) -> borders v and v+1 (uses (u, v+1) and (u+1, v+1) corners)
               if (!isSolid(u, v + 1)) {
                  pushQuad(
-                    getPosInner(theta1, z_top),
-                    getPosInner(theta2, z_top),
-                    getPosOuter(theta2, z_top),
-                    getPosOuter(theta1, z_top)
+                    getInner(u, v+1),
+                    getInner(u+1, v+1),
+                    getOuter(u+1, v+1),
+                    getOuter(u, v+1)
                  );
               }
 
-              // Left Face (-theta) -> u decreased
+              // Left Face (-theta) -> borders u and u-1 (uses (u, v+1) and (u, v) corners)
               if (!isSolid(u - 1, v)) {
                  pushQuad(
-                    getPosInner(theta1, z_top),
-                    getPosOuter(theta1, z_top),
-                    getPosOuter(theta1, z_bot),
-                    getPosInner(theta1, z_bot)
+                    getInner(u, v+1),
+                    getOuter(u, v+1),
+                    getOuter(u, v),
+                    getInner(u, v)
                  );
               }
 
-              // Right Face (+theta) -> u increased
+              // Right Face (+theta) -> borders u and u+1 (uses (u+1, v) and (u+1, v+1) corners)
               if (!isSolid(u + 1, v)) {
                  pushQuad(
-                    getPosInner(theta2, z_bot),
-                    getPosOuter(theta2, z_bot),
-                    getPosOuter(theta2, z_top),
-                    getPosInner(theta2, z_top)
+                    getInner(u+1, v),
+                    getOuter(u+1, v),
+                    getOuter(u+1, v+1),
+                    getInner(u+1, v+1)
                  );
               }
            }
@@ -660,91 +744,13 @@ export default function Scene({
         const unmergedGeo = new THREE.BufferGeometry();
         unmergedGeo.setAttribute('position', new THREE.Float32BufferAttribute(vertices, 3));
         const geometry = BufferGeometryUtils.mergeVertices(unmergedGeo, 0.0001);
-        
-        const posAttribute = geometry.getAttribute('position');
-        const indices = geometry.getIndex();
-
-        // 3D Anti-Aliasing: Laplacian Smoothing over the Voxel Mesh
-        if (indices && exportQuality !== 'low') {
-            const posArray = posAttribute.array;
-            const vertexCount = posAttribute.count;
-            
-            const constraints = new Array(vertexCount);
-            const zTopLimit = p.distance - p.height;
-            const zBotLimit = p.distance;
-            
-            for(let i=0; i<vertexCount; i++) {
-                const x = posArray[i*3];
-                const y = posArray[i*3+1];
-                const z = posArray[i*3+2];
-                const r = Math.sqrt(x*x + y*y);
-                
-                let isBoundaryZ = false;
-                let fixedZ = z;
-                if (Math.abs(z - zTopLimit) < 0.01) { isBoundaryZ = true; fixedZ = zTopLimit; }
-                if (Math.abs(z - zBotLimit) < 0.01) { isBoundaryZ = true; fixedZ = zBotLimit; }
-
-                constraints[i] = { r, isBoundaryZ, fixedZ };
-            }
-
-            const neighbors = new Array(vertexCount).fill(null).map(() => []);
-            const idxArray = indices.array;
-            for(let i=0; i<idxArray.length; i+=3) {
-                const a = idxArray[i], b = idxArray[i+1], c = idxArray[i+2];
-                neighbors[a].push(b, c);
-                neighbors[b].push(a, c);
-                neighbors[c].push(a, b);
-            }
-            
-            const smoothingIter = exportQuality === 'high' ? 8 : 4;
-            const newPos = new Float32Array(posArray.length);
-            
-            for (let iter=0; iter<smoothingIter; iter++) {
-                await yieldToMain();
-                for(let i=0; i<vertexCount; i++) {
-                    const nbrs = [...new Set(neighbors[i])];
-                    if (nbrs.length === 0) {
-                       newPos[i*3] = posArray[i*3];
-                       newPos[i*3+1] = posArray[i*3+1];
-                       newPos[i*3+2] = posArray[i*3+2];
-                       continue;
-                    }
-                    let sumX = 0, sumY = 0, sumZ = 0;
-                    for(let j=0; j<nbrs.length; j++) {
-                        let ni = nbrs[j];
-                        sumX += posArray[ni*3];
-                        sumY += posArray[ni*3+1];
-                        sumZ += posArray[ni*3+2];
-                    }
-                    let avgX = sumX / nbrs.length;
-                    let avgY = sumY / nbrs.length;
-                    let avgZ = sumZ / nbrs.length;
-
-                    const c = constraints[i];
-                    const dist = Math.sqrt(avgX*avgX + avgY*avgY);
-                    if (dist > 0.0001) {
-                        avgX = (avgX / dist) * c.r;
-                        avgY = (avgY / dist) * c.r;
-                    }
-
-                    if (c.isBoundaryZ) {
-                        avgZ = c.fixedZ;
-                    }
-
-                    newPos[i*3] = avgX;
-                    newPos[i*3+1] = avgY;
-                    newPos[i*3+2] = avgZ;
-                }
-                posArray.set(newPos);
-            }
-        }
 
         geometry.computeVertexNormals();
         
         const shadeMesh = new THREE.Mesh(geometry, new THREE.MeshBasicMaterial());
 
-        // --- STEP 3: Generate Base Cap Mesh ---
-        const baseGeo = new THREE.CylinderGeometry(1, 1, p.thickness, 128, 1, false);
+        // --- STEP 4: Generate Base Cap Mesh ---
+        const baseGeo = new THREE.CylinderGeometry(1, 1, p.thickness, W, 1, false);
         const posArr = baseGeo.attributes.position.array;
         for (let i = 0; i < posArr.length; i += 3) {
           const bx = posArr[i], bz = posArr[i+2];
