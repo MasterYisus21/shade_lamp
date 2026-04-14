@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { STLExporter } from 'three/examples/jsm/exporters/STLExporter.js';
 import * as BufferGeometryUtils from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { getShapeRadius, getSubpixelValues } from '../utils/geometry.js';
+import { contours } from 'd3-contour';
 
 const yieldToEventLoop = () => new Promise(resolve => setTimeout(resolve, 0));
 
@@ -250,7 +251,7 @@ async function handleExportSTL({ params, sourceImgData, exportQuality }) {
   if (exportQuality === 'high') { W = 2048; H = 1024; }
   if (exportQuality === 'ultra') { W = 4096; H = 2048; }
 
-  const grid = new Uint8Array(W * H);
+  const grid = new Float32Array(W * H);
   const rot = (params.imgRotation * Math.PI) / 180;
   const cosR = Math.cos(rot);
   const sinR = Math.sin(rot);
@@ -311,7 +312,7 @@ async function handleExportSTL({ params, sourceImgData, exportQuality }) {
 
   for (let v = 0; v < H; v++) {
     if (v > 0 && v % 32 === 0) {
-        self.postMessage({ type: 'EXPORT_PROGRESS', message: `Muestreo de Vóxeles (${Math.round((v/H)*100)}%)` });
+        self.postMessage({ type: 'EXPORT_PROGRESS', message: `Muestreo Subpixel (${Math.round((v/H)*100)}%)` });
         await yieldToEventLoop();
     }
 
@@ -322,9 +323,11 @@ async function handleExportSTL({ params, sourceImgData, exportQuality }) {
       const b11 = sampleBrightAt(u + 0.75, v + 0.75);
       const avgBright = (b00 + b10 + b01 + b11) * 0.25;
 
-      let isHole = false;
-      const isDark = avgBright < 128;
-      isHole = params.invertShadow ? !isDark : isDark;
+      let pixelVal = params.invertShadow ? (255 - avgBright) : avgBright;
+
+      // Un valor > 128 es sólido (blanco en la máscara original = block shadow)
+      // Ajustamos support logic para forzar a 255 si es soporte.
+      let isHole = pixelVal < 128;
 
       if (isHole && params.supportType !== 'none') {
         const arcLength = u === 0 ? 0 : arcLengths[u];
@@ -349,172 +352,149 @@ async function handleExportSTL({ params, sourceImgData, exportQuality }) {
           if (Math.abs(d) % spacing < thickness) isSupport = true;
         }
 
-        if (isSupport) isHole = false;
-
-        const rimSize = Math.max(2, Math.floor((10 / 512) * H));
-        if (v < rimSize || v > H - rimSize) isHole = false;
+        if (isSupport) pixelVal = 255;
       }
 
-      grid[v * W + u] = isHole ? 0 : 1;
+      const rimSize = Math.max(2, Math.floor((10 / 512) * H));
+      if (v < rimSize || v > H - rimSize) {
+         pixelVal = 255;
+      }
+
+      grid[v * W + u] = pixelVal;
     }
   }
 
-  const isSolid = (u_idx, v_idx) => {
-    if (v_idx < 0 || v_idx >= H) return false;
-    let wrapU = u_idx % W;
-    if (wrapU < 0) wrapU += W;
-    return grid[v_idx * W + wrapU] === 1;
-  };
+  self.postMessage({ type: 'EXPORT_PROGRESS', message: `Extrayendo contornos vectoriales (Marching Squares)` });
+  await yieldToEventLoop();
 
-  const bounds = new Uint8Array(W * (H + 1));
-  const pinned = new Uint8Array(W * (H + 1));
+  // El umbral es 128: separa lo sólido de lo hueco con precisión continua
+  const contourPaths = contours()
+    .size([W, H])
+    .thresholds([128])
+    (grid);
 
-  for (let v = 0; v <= H; v++) {
-    if (v % 64 === 0) await yieldToEventLoop();
-    for (let u = 0; u < W; u++) {
-      const tl = isSolid(u - 1, v - 1) ? 1 : 0;
-      const tr = isSolid(u, v - 1) ? 1 : 0;
-      const bl = isSolid(u - 1, v) ? 1 : 0;
-      const br = isSolid(u, v) ? 1 : 0;
-      const solidCount = tl + tr + bl + br;
-      if (solidCount === 0 || solidCount === 4) continue;
-      bounds[v * W + u] = 1;
-      if (solidCount !== 2) {
-        pinned[v * W + u] = 1;
-      }
-    }
+  if (!contourPaths || contourPaths.length === 0) {
+      self.postMessage({ type: 'ERROR', message: "No se encontró geometría sólida."});
+      return;
   }
 
-  const dispU = new Float32Array(W * (H + 1));
-  const dispV = new Float32Array(W * (H + 1));
-  const smoothIters = exportQuality === 'high' ? 12 : exportQuality === 'medium' ? 6 : 3;
+  const multiPolygons = contourPaths[0].coordinates;
 
-  for (let iter = 0; iter < smoothIters; iter++) {
-    self.postMessage({ type: 'EXPORT_PROGRESS', message: `Suavizando de bordes (Paso ${iter+1}/${smoothIters})` });
-    await yieldToEventLoop();
-    const tempU = new Float32Array(dispU);
-    const tempV = new Float32Array(dispV);
-    for (let v = 0; v <= H; v++) {
-      for (let u = 0; u < W; u++) {
-        if (!bounds[v * W + u] || pinned[v * W + u]) continue;
-        let sumU = 0, sumV = 0, count = 0;
-        const checkNeighbor = (nu, nv) => {
-          if (nv >= 0 && nv <= H) {
-            let wu = nu % W;
-            if (wu < 0) wu += W;
-            if (bounds[nv * W + wu]) {
-              sumU += (nu - u) + dispU[nv * W + wu];
-              sumV += (nv - v) + dispV[nv * W + wu];
-              count++;
-            }
-          }
-        };
-        checkNeighbor(u - 1, v);
-        checkNeighbor(u + 1, v);
-        checkNeighbor(u, v - 1);
-        checkNeighbor(u, v + 1);
-        if (count > 0) {
-          tempU[v * W + u] = sumU / count;
-          if (v > 0 && v < H) tempV[v * W + u] = sumV / count;
+  self.postMessage({ type: 'EXPORT_PROGRESS', message: `Triangulando vectores en 2D (Earcut)` });
+  await yieldToEventLoop();
+
+  const simplifyRing = (ring) => {
+     if(ring.length <= 3) return ring;
+     const out = [ring[0]];
+     for(let i=1; i<ring.length-1; i++){
+        const pPrev = out[out.length-1];
+        const pCurr = ring[i];
+        const pNext = ring[i+1];
+        const area = Math.abs(pPrev[0]*(pCurr[1]-pNext[1]) + pCurr[0]*(pNext[1]-pPrev[1]) + pNext[0]*(pPrev[1]-pCurr[1]));
+        if(area > 0.05) { 
+           out.push(pCurr);
         }
+     }
+     out.push(ring[ring.length-1]);
+     return out;
+  };
+
+  const createPath = (ring) => {
+      const path = new THREE.Path();
+      const simpleRing = simplifyRing(ring);
+      for (let i = 0; i < simpleRing.length; i++) {
+        const x = simpleRing[i][0];
+        const y = simpleRing[i][1];
+        if (i === 0) path.moveTo(x, y);
+        else path.lineTo(x, y);
       }
-    }
-    dispU.set(tempU);
-    dispV.set(tempV);
-  }
+      return path;
+  };
 
-  self.postMessage({ type: 'EXPORT_PROGRESS', message: `Desplegando Malla 3D` });
+  const shapeList = [];
   
-  let faceCount = 0;
-  for (let v = 0; v < H; v++) {
-    for (let u = 0; u < W; u++) {
-      if (grid[v * W + u] === 0) continue;
-      faceCount += 2; // Outer
-      faceCount += 2; // Inner
-      if (!isSolid(u, v - 1)) faceCount += 2; // Bottom
-      if (!isSolid(u, v + 1)) faceCount += 2; // Top
-      if (!isSolid(u - 1, v)) faceCount += 2; // Left
-      if (!isSolid(u + 1, v)) faceCount += 2; // Right
+  for (const polygon of multiPolygons) {
+    if (!polygon || polygon.length === 0) continue;
+    
+    // Anillo exterior
+    const outerRing = simplifyRing(polygon[0]);
+    const shape = new THREE.Shape();
+    
+    for (let i = 0; i < outerRing.length; i++) {
+        const x = outerRing[i][0];
+        const y = outerRing[i][1];
+        if (i === 0) shape.moveTo(x, y);
+        else shape.lineTo(x, y);
     }
+
+    // Huecos (anillos interiores)
+    for (let h = 1; h < polygon.length; h++) {
+        shape.holes.push(createPath(polygon[h]));
+    }
+    
+    shapeList.push(shape);
   }
 
-  const vertices = new Float32Array(faceCount * 3 * 3);
-  let vIdx = 0;
-
-  const pushQuad = (p1, p2, p3, p4) => {
-    vertices[vIdx++] = p1[0]; vertices[vIdx++] = p1[1]; vertices[vIdx++] = p1[2];
-    vertices[vIdx++] = p2[0]; vertices[vIdx++] = p2[1]; vertices[vIdx++] = p2[2];
-    vertices[vIdx++] = p3[0]; vertices[vIdx++] = p3[1]; vertices[vIdx++] = p3[2];
-
-    vertices[vIdx++] = p1[0]; vertices[vIdx++] = p1[1]; vertices[vIdx++] = p1[2];
-    vertices[vIdx++] = p3[0]; vertices[vIdx++] = p3[1]; vertices[vIdx++] = p3[2];
-    vertices[vIdx++] = p4[0]; vertices[vIdx++] = p4[1]; vertices[vIdx++] = p4[2];
+  // Tesselación extruida de los vectores
+  const extrudeSettings = {
+    steps: 1,
+    depth: params.thickness,
+    bevelEnabled: false
   };
 
-  const getPosInner = (th, z_out) => {
-    let r = getShapeRadius(th, params.shapeType, params.radius - params.thickness, params.boxWidth - 2 * params.thickness, params.boxDepth - 2 * params.thickness, Math.max(0, params.boxCornerRadius - params.thickness));
-    let R_out = getShapeRadius(th, params.shapeType, params.radius, params.boxWidth, params.boxDepth, params.boxCornerRadius);
-    let z = z_out;
-    const isBoundary = Math.abs(z_out - params.distance) < 0.01 || Math.abs(z_out - (params.distance - params.height)) < 0.01;
-    if (!isBoundary) z = z_out * (r / R_out);
-    return [r * Math.sin(th), -r * Math.cos(th), z];
-  };
+  const geometry = new THREE.ExtrudeGeometry(shapeList, extrudeSettings);
 
-  const getPosOuter = (th, z_out) => {
-    let r = getShapeRadius(th, params.shapeType, params.radius, params.boxWidth, params.boxDepth, params.boxCornerRadius);
-    return [r * Math.sin(th), -r * Math.cos(th), z_out];
-  };
+  self.postMessage({ type: 'EXPORT_PROGRESS', message: `Envolviendo geometría a 3D Cilíndrico` });
+  await yieldToEventLoop();
 
-  const getVoxelCorner = (u, v, inner) => {
-    let wrapU = u % W;
-    if (wrapU < 0) wrapU += W;
-    let final_u = u + dispU[v * W + wrapU];
-    let final_v = v + dispV[v * W + wrapU];
-    const theta = (final_u / W) * 2 * Math.PI;
-    const z_norm = 1.0 - final_v / H;
+  const posArr = geometry.attributes.position.array;
+  for (let i = 0; i < posArr.length; i += 3) {
+    const u = posArr[i];
+    const v = posArr[i + 1];
+    const z_ext = posArr[i + 2]; 
+
+    const inner = z_ext > (params.thickness * 0.5); 
+    
+    let u_clamped = Math.max(0, Math.min(W, u));
+    let v_clamped = Math.max(0, Math.min(H, v));
+
+    const theta = (u_clamped / W) * 2 * Math.PI;
+    const z_norm = 1.0 - (v_clamped / H);
     const z_out = params.distance - params.height + z_norm * params.height;
-    if (inner) return getPosInner(theta, z_out);
-    return getPosOuter(theta, z_out);
-  };
 
-  const getOuter = (u, v) => getVoxelCorner(u, v, false);
-  const getInner = (u, v) => getVoxelCorner(u, v, true);
+    const r_outer = getShapeRadius(theta, params.shapeType, params.radius, params.boxWidth, params.boxDepth, params.boxCornerRadius);
+    const r_inner = getShapeRadius(theta, params.shapeType, params.radius - params.thickness, params.boxWidth - 2 * params.thickness, params.boxDepth - 2 * params.thickness, Math.max(0, params.boxCornerRadius - params.thickness));
 
-  for (let v = 0; v < H; v++) {
-    if (v > 0 && v % 64 === 0) await yieldToEventLoop();
-    for (let u = 0; u < W; u++) {
-      if (grid[v * W + u] === 0) continue;
+    const R = inner ? r_inner : r_outer;
+    
+    posArr[i] = R * Math.sin(theta);
+    posArr[i + 1] = -R * Math.cos(theta);
+    posArr[i + 2] = z_out; 
 
-      pushQuad(getOuter(u, v), getOuter(u, v + 1), getOuter(u + 1, v + 1), getOuter(u + 1, v));
-      pushQuad(getInner(u + 1, v), getInner(u + 1, v + 1), getInner(u, v + 1), getInner(u, v));
-
-      if (!isSolid(u, v - 1)) pushQuad(getOuter(u, v), getOuter(u + 1, v), getInner(u + 1, v), getInner(u, v));
-      if (!isSolid(u, v + 1)) pushQuad(getInner(u, v + 1), getInner(u + 1, v + 1), getOuter(u + 1, v + 1), getOuter(u, v + 1));
-      if (!isSolid(u - 1, v)) pushQuad(getInner(u, v + 1), getOuter(u, v + 1), getOuter(u, v), getInner(u, v));
-      if (!isSolid(u + 1, v)) pushQuad(getInner(u + 1, v), getOuter(u + 1, v), getOuter(u + 1, v + 1), getInner(u + 1, v + 1));
+    // Rectificar el borde base en Y/Z (rim)
+    const isBoundary = Math.abs(z_out - params.distance) < 0.01 || Math.abs(z_out - (params.distance - params.height)) < 0.01;
+    if (inner && !isBoundary) {
+         posArr[i + 2] = z_out * (r_inner / r_outer);
     }
   }
 
-  self.postMessage({ type: 'EXPORT_PROGRESS', message: `Construyendo Malla Final y exportando STL` });
+  geometry.computeVertexNormals();
 
-  const geometry = new THREE.BufferGeometry();
-  geometry.setAttribute('position', new THREE.BufferAttribute(vertices, 3));
-  // Not using mergeVertices! STLExporter will compute triangle normals natively.
-  
   const shadeMesh = new THREE.Mesh(geometry, new THREE.MeshBasicMaterial());
 
   const baseGeo = new THREE.CylinderGeometry(1, 1, params.thickness, W, 1, false);
-  const posArr = baseGeo.attributes.position.array;
-  for (let i = 0; i < posArr.length; i += 3) {
-    const bx = posArr[i], bz = posArr[i + 2];
+  const basePos = baseGeo.attributes.position.array;
+  for (let i = 0; i < basePos.length; i += 3) {
+    const bx = basePos[i], bz = basePos[i + 2];
     const dist = Math.sqrt(bx * bx + bz * bz);
     if (dist > 0.001) {
       let th = Math.atan2(bx, bz);
       const R = getShapeRadius(th, params.shapeType, params.radius, params.boxWidth, params.boxDepth, params.boxCornerRadius);
-      posArr[i] = (bx / dist) * R;
-      posArr[i + 2] = (bz / dist) * R;
+      basePos[i] = (bx / dist) * R;
+      basePos[i + 2] = (bz / dist) * R;
     }
   }
+  baseGeo.computeVertexNormals();
 
   const baseMesh = new THREE.Mesh(baseGeo, new THREE.MeshBasicMaterial());
   baseMesh.rotation.set(Math.PI / 2, 0, 0);
@@ -531,9 +511,7 @@ async function handleExportSTL({ params, sourceImgData, exportQuality }) {
   group.updateMatrixWorld(true);
 
   const exporter = new STLExporter();
-  // Using binary: true saves 90% file size and returns a DataView
   const stlData = exporter.parse(group, { binary: true });
 
-  // Transfer the buffer over to the main thread with zero-copy
-  self.postMessage({ type: 'EXPORT_STL_COMPLETE', data: stlData.buffer }, [stlData.buffer]);
+  self.postMessage({ type: 'EXPORT_STL_COMPLETE', data: stlData.buffer, exportQuality }, [stlData.buffer]);
 }

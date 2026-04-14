@@ -75,8 +75,9 @@ export default function Scene({
         setValidationMap(vTex);
         if (onValidateComplete) onValidateComplete();
       } else if (type === 'EXPORT_STL_COMPLETE') {
+        const { exportQuality } = e.data;
         const p = paramsRef.current;
-        const defaultName = `lamp_${p.imageName}_${p.distance}cm`;
+        const defaultName = `lamp_${p.imageName}_${p.distance}cm_${p.shapeType}_${exportQuality}`;
         const fileName = window.prompt("Introduce el nombre del archivo STL a exportar:", defaultName);
         if (fileName !== null && fileName.trim() !== "") {
           const safeFileName = fileName.endsWith('.stl') ? fileName : `${fileName}.stl`;
