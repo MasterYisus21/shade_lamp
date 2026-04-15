@@ -1,9 +1,12 @@
-import React, { useState } from 'react';
-import { Upload, Lightbulb, Calculator, Download, Loader2 } from 'lucide-react';
+import React, { useState, useCallback } from 'react';
+import { Upload, Lightbulb, Calculator, Download, Loader2, Settings, Box, Image as ImageIcon, Settings2, Trash2, LightbulbOff, Layers } from 'lucide-react';
 import Scene from './Scene';
 import './index.css';
 
 function App() {
+  // GUI State
+  const [activeTab, setActiveTab] = useState('global'); // 'global', 'lamp', 'image', 'export'
+
   // Application State
   const [radius, setRadius] = useState(2);
   const [thickness, setThickness] = useState(0.2);
@@ -31,9 +34,9 @@ function App() {
   const [imgFlipY, setImgFlipY] = useState(false);
 
   // Support Grid Configuration
-  const [supportType, setSupportType] = useState('none'); // none, vertical, horizontal, diagonal_45, diagonal_-45, grid, diagonal_cross
-  const [supportThickness, setSupportThickness] = useState(0.8); // mm (min 0.2, max 0.8)
-  const [supportSpacing, setSupportSpacing] = useState(10); // mm
+  const [supportType, setSupportType] = useState('none');
+  const [supportThickness, setSupportThickness] = useState(0.8);
+  const [supportSpacing, setSupportSpacing] = useState(10);
 
   // Ray-Casting Logic
   const [invertShadow, setInvertShadow] = useState(false);
@@ -57,6 +60,7 @@ function App() {
       const reader = new FileReader();
       reader.onload = (event) => {
         setUploadedImage(event.target.result);
+        setActiveTab('image'); // Auto-switch to image settings
       };
       reader.readAsDataURL(file);
     }
@@ -69,16 +73,12 @@ function App() {
 
   const handleCalculate = () => {
     setLoadingState({ isLoading: true, title: 'Calculando Geometría', description: 'Calculando proyección de sombras...' });
-    setTimeout(() => {
-      setCalculateTrigger(t => t + 1);
-    }, 150);
+    setTimeout(() => setCalculateTrigger(t => t + 1), 150);
   };
 
   const handleValidate = () => {
     setLoadingState({ isLoading: true, title: 'Validando Sombra', description: 'Trazando luz y sombra real...' });
-    setTimeout(() => {
-      setValidateTrigger(t => t + 1);
-    }, 150);
+    setTimeout(() => setValidateTrigger(t => t + 1), 150);
   };
 
   const handleReset = () => {
@@ -87,11 +87,19 @@ function App() {
 
   const handleExport = () => {
     setLoadingState({ isLoading: true, title: 'Generando Modelo STL...', description: 'Este proceso puede tardar unos segundos. Por favor espera.' });
-    // Timeout allows the UI to render the loading overlay before freezing the thread
-    setTimeout(() => {
-      setExportTrigger(t => t + 1);
-    }, 150);
+    setTimeout(() => setExportTrigger(t => t + 1), 150);
   };
+
+  const [hideValidationMap, setHideValidationMap] = useState(false);
+
+  // Callback to sync transform controls back to state
+  const handleImageTransformChange = useCallback(({ x, y, scaleX, scaleY }) => {
+    if (x !== undefined) setImgOffsetX(parseFloat(x.toFixed(2)));
+    if (y !== undefined) setImgOffsetY(parseFloat(y.toFixed(2)));
+    if (scaleX !== undefined) setImgScaleX(parseFloat(scaleX.toFixed(2)));
+    // Note: TransformControls mostly scales uniformly unless you tweak it, but we support both
+    if (scaleY !== undefined) setImgScaleY(parseFloat(scaleY.toFixed(2)));
+  }, []);
 
   return (
     <div className="app-container">
@@ -99,327 +107,47 @@ function App() {
       {loadingState.isLoading && (
         <div style={{
           position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
-          backgroundColor: 'rgba(15, 23, 42, 0.9)', zIndex: 9999,
+          backgroundColor: 'rgba(10, 15, 26, 0.9)', zIndex: 9999,
           display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
           color: 'white', fontFamily: 'sans-serif'
         }}>
           <Loader2 size={48} className="lucide-spin" style={{ animation: 'spin 2s linear infinite', marginBottom: '16px', color: '#c084fc' }} />
           <style>{`@keyframes spin { 100% { transform: rotate(360deg); } }`}</style>
-          <h2 style={{ margin: '0 0 8px 0' }}>{loadingState.title}</h2>
-          <p style={{ color: '#94a3b8', margin: 0 }}>{loadingState.description}</p>
+          <h2 style={{ margin: '0 0 8px 0', fontSize: '1.5rem', fontWeight: '600' }}>{loadingState.title}</h2>
+          <p style={{ color: '#94a3b8', margin: 0, fontSize: '0.9rem' }}>{loadingState.description}</p>
         </div>
       )}
 
-      {/* Sidebar Controls */}
-      <div className="sidebar">
-        <div className="header">
-          <h1>Lámpara de Sombras 3D</h1>
-          <p>Generador de Geometría STL</p>
-        </div>
-
-        <div style={{ padding: '16px', background: 'rgba(0,0,0,0.2)', borderRadius: '8px', border: '1px solid var(--border)', display: 'flex', flexDirection: 'column', gap: '16px' }}>
-          <h3 style={{ fontSize: '14px', color: 'var(--text-main)', borderBottom: '1px solid var(--border)', paddingBottom: '8px', margin: 0 }}>Parámetros de la Luz y Pared</h3>
-          <div className="control-group">
-            <label>Color de la Pared (Lienzo)</label>
-            <select
-              value={bgColor}
-              onChange={(e) => setBgColor(e.target.value)}
-              style={{ background: 'var(--input-bg)', color: 'white', border: '1px solid var(--border)', borderRadius: '4px', padding: '4px 8px', width: '100%' }}
-            >
-              <option value="#1e293b">Oscuro</option>
-              <option value="#ffffff">Claro (Blanco)</option>
-            </select>
-          </div>
-          <div className="control-group">
-            <label>Color de la Luz (Validación)</label>
-            <select
-              value={lightFillColor}
-              onChange={(e) => setLightFillColor(e.target.value)}
-              style={{ background: 'var(--input-bg)', color: 'white', border: '1px solid var(--border)', borderRadius: '4px', padding: '4px 8px', width: '100%' }}
-            >
-              <option value="yellow">Luz Cálida (Amarillento)</option>
-              <option value="white">Luz Intensa (Blanco)</option>
-              <option value="blue">Luz Fría (Neon Azul)</option>
-            </select>
-          </div>
-          <div className="control-group">
-            <label>Radio de la Bombilla (Luz) <span>{bulbRadius.toFixed(2)} cm</span></label>
-            <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-              <input type="range" min="0.1" max={maxBulbRadius} step="0.1" value={Math.min(bulbRadius, maxBulbRadius)} onChange={(e) => setBulbRadius(parseFloat(e.target.value))} />
-              <input type="number" min="0.1" max={maxBulbRadius} step="0.1" value={Math.min(bulbRadius, maxBulbRadius).toFixed(2)} onChange={(e) => setBulbRadius(parseFloat(e.target.value))} style={{ width: '60px', padding: '4px', background: 'var(--input-bg)', color: 'white', border: '1px solid var(--border)', borderRadius: '4px' }} />
-            </div>
-          </div>
-          <div className="control-group">
-            <label>Distancia a la Pared de Proyección <span>{distance} cm</span></label>
-            <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-              <input type="range" min="2" max="20" step="1" value={distance} onChange={(e) => setDistance(parseFloat(e.target.value))} />
-              <input type="number" min="2" max="20" step="1" value={distance} onChange={(e) => setDistance(parseFloat(e.target.value))} style={{ width: '60px', padding: '4px', background: 'var(--input-bg)', color: 'white', border: '1px solid var(--border)', borderRadius: '4px' }} />
-            </div>
-          </div>
-        </div>
-
-        <div style={{ padding: '16px', background: 'rgba(0,0,0,0.2)', borderRadius: '8px', border: '1px solid var(--border)', display: 'flex', flexDirection: 'column', gap: '16px' }}>
-          <h3 style={{ fontSize: '14px', color: 'var(--text-main)', borderBottom: '1px solid var(--border)', paddingBottom: '8px', margin: 0 }}>Geometría de la Lámpara</h3>
-
-          <div className="control-group">
-            <label>Tipo de Lámpara</label>
-            <select
-              value={shapeType}
-              onChange={(e) => {
-                setShapeType(e.target.value);
-                if (e.target.value === 'box') {
-                  if (bulbRadius > Math.min(boxWidth / 2, boxDepth / 2) - thickness) {
-                    setBulbRadius(Math.max(0.1, Math.min(boxWidth / 2, boxDepth / 2) - thickness));
-                  }
-                } else {
-                  if (bulbRadius > radius - thickness) {
-                    setBulbRadius(Math.max(0.1, radius - thickness));
-                  }
-                }
-              }}
-              style={{ background: 'var(--input-bg)', color: 'white', border: '1px solid var(--border)', borderRadius: '4px', padding: '4px 8px', width: '100%' }}
-            >
-              <option value="cylinder">Cilindro Clásico</option>
-              <option value="box">Caja (Rectángulo Redondeado)</option>
-            </select>
-          </div>
-
-          {shapeType === 'cylinder' ? (
-            <div className="control-group">
-              <label>Radio del Cilindro <span>{radius} cm</span></label>
-              <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-                <input type="range" min="1" max="10" step="0.1" value={radius} onChange={(e) => {
-                  const newRadius = parseFloat(e.target.value);
-                  setRadius(newRadius);
-                  if (bulbRadius > newRadius - thickness) setBulbRadius(Math.max(0.1, newRadius - thickness));
-                }} />
-                <input type="number" min="1" max="10" step="0.1" value={radius} onChange={(e) => {
-                  const newRadius = parseFloat(e.target.value);
-                  setRadius(newRadius);
-                  if (bulbRadius > newRadius - thickness) setBulbRadius(Math.max(0.1, newRadius - thickness));
-                }} style={{ width: '60px', padding: '4px', background: 'var(--input-bg)', color: 'white', border: '1px solid var(--border)', borderRadius: '4px' }} />
-              </div>
-            </div>
-          ) : (
-            <>
-              <div className="control-group">
-                <label>Ancho de la Caja (X) <span>{boxWidth} cm</span></label>
-                <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-                  <input type="range" min="2" max="30" step="0.5" value={boxWidth} onChange={(e) => {
-                    const val = parseFloat(e.target.value);
-                    setBoxWidth(val);
-                    if (boxCornerRadius > Math.min(val / 2, boxDepth / 2)) setBoxCornerRadius(Math.max(0, Math.min(val / 2, boxDepth / 2)));
-                    if (bulbRadius > Math.min(val / 2, boxDepth / 2) - thickness) setBulbRadius(Math.max(0.1, Math.min(val / 2, boxDepth / 2) - thickness));
-                  }} />
-                  <input type="number" min="2" max="30" step="0.5" value={boxWidth} onChange={(e) => {
-                    const val = parseFloat(e.target.value);
-                    setBoxWidth(val);
-                    if (boxCornerRadius > Math.min(val / 2, boxDepth / 2)) setBoxCornerRadius(Math.max(0, Math.min(val / 2, boxDepth / 2)));
-                    if (bulbRadius > Math.min(val / 2, boxDepth / 2) - thickness) setBulbRadius(Math.max(0.1, Math.min(val / 2, boxDepth / 2) - thickness));
-                  }} style={{ width: '60px', padding: '4px', background: 'var(--input-bg)', color: 'white', border: '1px solid var(--border)', borderRadius: '4px' }} />
-                </div>
-              </div>
-              <div className="control-group">
-                <label>Profundidad (Y) <span>{boxDepth} cm</span></label>
-                <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-                  <input type="range" min="2" max="30" step="0.5" value={boxDepth} onChange={(e) => {
-                    const val = parseFloat(e.target.value);
-                    setBoxDepth(val);
-                    if (boxCornerRadius > Math.min(boxWidth / 2, val / 2)) setBoxCornerRadius(Math.max(0, Math.min(boxWidth / 2, val / 2)));
-                    if (bulbRadius > Math.min(boxWidth / 2, val / 2) - thickness) setBulbRadius(Math.max(0.1, Math.min(boxWidth / 2, val / 2) - thickness));
-                  }} />
-                  <input type="number" min="2" max="30" step="0.5" value={boxDepth} onChange={(e) => {
-                    const val = parseFloat(e.target.value);
-                    setBoxDepth(val);
-                    if (boxCornerRadius > Math.min(boxWidth / 2, val / 2)) setBoxCornerRadius(Math.max(0, Math.min(boxWidth / 2, val / 2)));
-                    if (bulbRadius > Math.min(boxWidth / 2, val / 2) - thickness) setBulbRadius(Math.max(0.1, Math.min(boxWidth / 2, val / 2) - thickness));
-                  }} style={{ width: '60px', padding: '4px', background: 'var(--input-bg)', color: 'white', border: '1px solid var(--border)', borderRadius: '4px' }} />
-                </div>
-              </div>
-              <div className="control-group">
-                <label>Radio de Esquina (Bordes) <span>{boxCornerRadius} cm</span></label>
-                <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-                  <input type="range" min="0" max={Math.min(boxWidth / 2, boxDepth / 2)} step="0.5" value={boxCornerRadius} onChange={(e) => setBoxCornerRadius(parseFloat(e.target.value))} />
-                  <input type="number" min="0" max={Math.min(boxWidth / 2, boxDepth / 2)} step="0.5" value={boxCornerRadius} onChange={(e) => setBoxCornerRadius(parseFloat(e.target.value))} style={{ width: '60px', padding: '4px', background: 'var(--input-bg)', color: 'white', border: '1px solid var(--border)', borderRadius: '4px' }} />
-                </div>
-              </div>
-            </>
-          )}
-          <div className="control-group">
-            <label>Altura del Cilindro <span>{height} cm</span></label>
-            <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-              <input type="range" min="5" max="20" step="0.5" value={height} onChange={(e) => setHeight(parseFloat(e.target.value))} />
-              <input type="number" min="5" max="20" step="0.5" value={height} onChange={(e) => setHeight(parseFloat(e.target.value))} style={{ width: '60px', padding: '4px', background: 'var(--input-bg)', color: 'white', border: '1px solid var(--border)', borderRadius: '4px' }} />
-            </div>
-          </div>
-          <div className="control-group">
-            <label>Grosor de la Pared <span>{thickness} cm</span></label>
-            <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-              <input type="range" min="0.1" max="1" step="0.05" value={thickness} onChange={(e) => {
-                const newThickness = parseFloat(e.target.value);
-                setThickness(newThickness);
-                const boundRad = shapeType === 'cylinder' ? radius : Math.min(boxWidth / 2, boxDepth / 2);
-                if (bulbRadius > boundRad - newThickness) setBulbRadius(Math.max(0.1, boundRad - newThickness));
-              }} />
-              <input type="number" min="0.1" max="1" step="0.05" value={thickness} onChange={(e) => {
-                const newThickness = parseFloat(e.target.value);
-                setThickness(newThickness);
-                const boundRad = shapeType === 'cylinder' ? radius : Math.min(boxWidth / 2, boxDepth / 2);
-                if (bulbRadius > boundRad - newThickness) setBulbRadius(Math.max(0.1, boundRad - newThickness));
-              }} style={{ width: '60px', padding: '4px', background: 'var(--input-bg)', color: 'white', border: '1px solid var(--border)', borderRadius: '4px' }} />
-            </div>
-          </div>
-        </div>
-
-        <div style={{ padding: '16px', background: 'rgba(0,0,0,0.2)', borderRadius: '8px', border: '1px solid var(--border)', display: 'flex', flexDirection: 'column', gap: '16px' }}>
-          <h3 style={{ fontSize: '14px', color: 'var(--text-main)', borderBottom: '1px solid var(--border)', paddingBottom: '8px', margin: 0 }}>Controles de Proyección de Imagen</h3>
-
-          <div style={{ display: 'flex', gap: '12px' }}>
-            <label className="upload-btn" style={{ flex: 1, padding: '8px', fontSize: '12px' }}>
-              <Upload size={14} />
-              Subir Imagen
-              <input type="file" accept="image/*" onChange={handleImageUpload} />
-            </label>
-            {uploadedImage && (
-              <button className="upload-btn" onClick={handleRemoveImage} style={{ flex: 1, background: '#ef4444', padding: '8px', fontSize: '12px' }}>
-                Eliminar Imagen
-              </button>
-            )}
-          </div>
-          <small style={{ color: 'var(--text-main)', opacity: 0.8, fontSize: '12px', marginTop: '-10px' }}>
-            <strong>Recomendación:</strong> Usa imágenes <strong>SVG</strong> para obtener cortes con curvas perfectas de máxima resolución en tu modelo 3D.
-          </small>
-
-          <div className="control-group">
-            <label>Escala Horizontal (X) <span>{imgScaleX} cm</span></label>
-            <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-              <input type="range" min="1" max="100" step="1" value={imgScaleX} onChange={(e) => setImgScaleX(parseFloat(e.target.value))} />
-              <input type="number" min="1" max="100" step="1" value={imgScaleX} onChange={(e) => setImgScaleX(parseFloat(e.target.value))} style={{ width: '60px', padding: '4px', background: 'var(--input-bg)', color: 'white', border: '1px solid var(--border)', borderRadius: '4px' }} />
-            </div>
-          </div>
-          <div className="control-group">
-            <label>Escala Vertical (Y) <span>{imgScaleY} cm</span></label>
-            <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-              <input type="range" min="1" max="100" step="1" value={imgScaleY} onChange={(e) => setImgScaleY(parseFloat(e.target.value))} />
-              <input type="number" min="1" max="100" step="1" value={imgScaleY} onChange={(e) => setImgScaleY(parseFloat(e.target.value))} style={{ width: '60px', padding: '4px', background: 'var(--input-bg)', color: 'white', border: '1px solid var(--border)', borderRadius: '4px' }} />
-            </div>
-          </div>
-          <div className="control-group">
-            <label>Desplazamiento X <span>{imgOffsetX} cm</span></label>
-            <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-              <input type="range" min="-50" max="50" step="0.5" value={imgOffsetX} onChange={(e) => setImgOffsetX(parseFloat(e.target.value))} />
-              <input type="number" min="-50" max="50" step="0.5" value={imgOffsetX} onChange={(e) => setImgOffsetX(parseFloat(e.target.value))} style={{ width: '60px', padding: '4px', background: 'var(--input-bg)', color: 'white', border: '1px solid var(--border)', borderRadius: '4px' }} />
-            </div>
-          </div>
-          <div className="control-group">
-            <label>Desplazamiento Y <span>{imgOffsetY} cm</span></label>
-            <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-              <input type="range" min="-50" max="50" step="0.5" value={imgOffsetY} onChange={(e) => setImgOffsetY(parseFloat(e.target.value))} />
-              <input type="number" min="-50" max="50" step="0.5" value={imgOffsetY} onChange={(e) => setImgOffsetY(parseFloat(e.target.value))} style={{ width: '60px', padding: '4px', background: 'var(--input-bg)', color: 'white', border: '1px solid var(--border)', borderRadius: '4px' }} />
-            </div>
-          </div>
-          <div className="control-group">
-            <label>Rotación <span>{imgRotation}°</span></label>
-            <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-              <input type="range" min="-180" max="180" step="1" value={imgRotation} onChange={(e) => setImgRotation(parseFloat(e.target.value))} />
-              <input type="number" min="-180" max="180" step="1" value={imgRotation} onChange={(e) => setImgRotation(parseFloat(e.target.value))} style={{ width: '60px', padding: '4px', background: 'var(--input-bg)', color: 'white', border: '1px solid var(--border)', borderRadius: '4px' }} />
-            </div>
-          </div>
-
-          <div style={{ display: 'flex', gap: '16px', marginTop: '8px' }}>
-            <label style={{ display: 'flex', alignItems: 'center', gap: '8px', color: 'var(--text-main)', fontSize: '14px', cursor: 'pointer' }}>
-              <input type="checkbox" checked={imgFlipX} onChange={(e) => setImgFlipX(e.target.checked)} style={{ transform: 'scale(1.2)' }} />
-              Reflejar X
-            </label>
-            <label style={{ display: 'flex', alignItems: 'center', gap: '8px', color: 'var(--text-main)', fontSize: '14px', cursor: 'pointer' }}>
-              <input type="checkbox" checked={imgFlipY} onChange={(e) => setImgFlipY(e.target.checked)} style={{ transform: 'scale(1.2)' }} />
-              Reflejar Y
-            </label>
-          </div>
-
-          <label style={{ display: 'flex', alignItems: 'center', gap: '8px', color: 'var(--text-main)', fontSize: '14px', marginTop: '8px', cursor: 'pointer' }}>
-            <input type="checkbox" checked={invertShadow} onChange={(e) => setInvertShadow(e.target.checked)} style={{ transform: 'scale(1.2)' }} />
-            Invertir Sombra (Huecos vs Sólidos)
-          </label>
-        </div>
-
-        <div style={{ padding: '16px', background: 'rgba(0,0,0,0.2)', borderRadius: '8px', border: '1px solid var(--border)', display: 'flex', flexDirection: 'column', gap: '12px', marginTop: '16px' }}>
-          <h3 style={{ fontSize: '14px', color: 'var(--text-main)', borderBottom: '1px solid var(--border)', paddingBottom: '8px', margin: 0 }}>Puentes (Soportes Físicos)</h3>
-
-          <div className="control-group">
-            <label>Tipo de Puente</label>
-            <select
-              value={supportType}
-              onChange={(e) => setSupportType(e.target.value)}
-              style={{ background: 'var(--input-bg)', color: 'white', border: '1px solid var(--border)', borderRadius: '4px', padding: '4px 8px', width: '100%' }}
-            >
-              <option value="none">Sin Puentes</option>
-              <option value="vertical">Vertical (90°)</option>
-              <option value="horizontal">Horizontal (0°)</option>
-              <option value="diagonal_45">Diagonal (+45°)</option>
-              <option value="diagonal_neg45">Diagonal (-45°)</option>
-              <option value="grid">Cuadrícula Ortogonal</option>
-              <option value="diagonal_cross">Malla Cruzada</option>
-            </select>
-          </div>
-
-          <div className="control-group">
-            <label>Grosor del Puente <span>{supportThickness} mm</span></label>
-            <input type="range" min="0.6" max="1.6" step="0.2" value={supportThickness} onChange={(e) => setSupportThickness(parseFloat(e.target.value))} />
-          </div>
-
-          <div className="control-group">
-            <label>Espaciado entre puentes <span>{supportSpacing} mm</span></label>
-            <input type="range" min="2" max="50" step="1" value={supportSpacing} onChange={(e) => setSupportSpacing(parseFloat(e.target.value))} />
-          </div>
-        </div>
-
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginTop: '16px' }}>
-          <button className="upload-btn" onClick={handleCalculate} style={{ background: '#9b51e0' }}>
-            <Calculator size={18} />
-            1. Generar Vista Previa (Recortar Matriz)
-          </button>
-
-          <button className="upload-btn" onClick={handleValidate} style={{ background: '#2563eb' }}>
-            <Lightbulb size={18} />
-            2. Trazar Sombra Real (Contorno Azul)
-          </button>
-
-          <div style={{ display: 'flex', gap: '8px', marginTop: '16px' }}>
-            <select
-              value={exportQuality}
-              onChange={(e) => setExportQuality(e.target.value)}
-              style={{ background: 'var(--input-bg)', color: 'white', border: '1px solid var(--border)', borderRadius: '4px', padding: '0 8px' }}
-            >
-              <option value="low">Calidad: Baja (256×128 celdas)</option>
-              <option value="medium">Calidad: Media (512×256 celdas)</option>
-              <option value="high">Calidad: Alta (1024×512 celdas)</option>
-              <option value="ultra">Calidad: Ultra (2048×1024 celdas)</option>
-            </select>
-            <button className="upload-btn" onClick={handleExport} style={{ background: '#10b981', flex: 1 }}>
-              <Download size={18} />
-              3. Descargar STL
-            </button>
-          </div>
-
-          <button className="upload-btn" onClick={handleReset} style={{ background: '#475569', marginTop: '16px' }}>
-            Restablecer Memoria (Borrar Previsualizaciones)
-          </button>
-        </div>
-
-        <div className="info-box">
-          <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '8px', color: 'var(--text-main)' }}>
-            <Lightbulb size={16} color="var(--accent)" />
-            <strong>Restricciones Lógicas (Geometría)</strong>
-          </div>
-          El origen de la luz se encuentra en [0,0,0]. La pared de proyección en Z = {distance} cm.
-          El bombillo (radio interno máximo) debe ser más pequeño que el interior de la lámpara.
-        </div>
+      {/* Toolbar Top */}
+      <div className="toolbar-top">
+        <button className={`toolbar-btn ${activeTab === 'global' ? 'active' : ''}`} onClick={() => setActiveTab('global')} title="Ajustes Globales">
+          <Settings size={22} />
+          <span>General</span>
+        </button>
+        <button className={`toolbar-btn ${activeTab === 'lamp' ? 'active' : ''}`} onClick={() => setActiveTab('lamp')} title="Geometría Lámpara">
+          <Box size={22} />
+          <span>Lámpara</span>
+        </button>
+        <button className={`toolbar-btn ${activeTab === 'image' ? 'active' : ''}`} onClick={() => setActiveTab('image')} title="Proyección de Imagen">
+          <ImageIcon size={22} />
+          <span>Imagen</span>
+        </button>
+        <button className={`toolbar-btn ${activeTab === 'export' ? 'active' : ''}`} onClick={() => setActiveTab('export')} title="Herramientas y Exportación">
+          <Settings2 size={22} />
+          <span>Exportar</span>
+        </button>
+        <button className={`toolbar-btn ${activeTab === 'additional' ? 'active' : ''}`} onClick={() => setActiveTab('additional')} title="Funciones Adicionales">
+          <Layers size={22} />
+          <span>Adicional</span>
+        </button>
       </div>
 
-      {/* Main Viewport for Three.js */}
-      <div className="viewport">
+      <div className="main-content">
+        {/* Main Viewport */}
+        <div className="viewport">
         <Scene
+          activeTab={activeTab}
+          setActiveTab={setActiveTab}
           radius={radius}
           shapeType={shapeType}
           boxWidth={boxWidth}
@@ -447,14 +175,325 @@ function App() {
           resetPulse={resetPulse}
           exportTrigger={exportTrigger}
           exportQuality={exportQuality}
-          onCalculateComplete={() => setLoadingState({ isLoading: false, title: '', description: '' })}
-          onValidateComplete={() => setLoadingState({ isLoading: false, title: '', description: '' })}
-          onExportComplete={() => setLoadingState({ isLoading: false, title: '', description: '' })}
+          onCalculateComplete={() => setLoadingState({ isLoading: false })}
+          onValidateComplete={() => setLoadingState({ isLoading: false })}
+          onExportComplete={() => setLoadingState({ isLoading: false })}
           bgColor={bgColor}
           lightFillColor={lightFillColor}
+          hideValidationMap={hideValidationMap}
+          onImageTransformChange={handleImageTransformChange}
         />
+
+        {/* Global Toolbar overlay for quick actions */}
+        <div className="overlay-controls" style={{ flexDirection: 'column' }}>
+           <div style={{ display: 'flex', gap: '8px' }}>
+             <button className="btn btn-primary" onClick={handleCalculate} style={{ padding: '8px 16px', fontSize: '0.8rem', width: 'auto' }}>
+               <Calculator size={16} /> 1. Generar Vista
+             </button>
+             <button className="btn btn-blue" onClick={handleValidate} style={{ padding: '8px 16px', fontSize: '0.8rem', width: 'auto' }}>
+               <Lightbulb size={16} /> 2. Validar Sombra
+             </button>
+             <button className="btn btn-secondary" onClick={() => setHideValidationMap(!hideValidationMap)} style={{ padding: '8px 16px', fontSize: '0.8rem', width: 'auto' }} title="Apagar o Encender Sombra de Validación">
+               {hideValidationMap ? <LightbulbOff size={16} /> : <Lightbulb size={16} />}
+             </button>
+           </div>
+           <div style={{ display: 'flex', gap: '8px' }}>
+             <button className="btn btn-secondary" onClick={handleReset} style={{ padding: '8px 16px', fontSize: '0.8rem', width: '100%' }}>
+               <Trash2 size={16} /> Limpiar Memoria/Caché
+             </button>
+           </div>
+        </div>
+      </div>
+
+      {/* Properties Panel Right */}
+      <div className="properties-panel">
+        <div className="panel-header">
+          <h2>
+            {activeTab === 'global' && <><Settings size={20} color="var(--accent)"/> Ajustes Globales</>}
+            {activeTab === 'lamp' && <><Box size={20} color="var(--accent)"/> Geometría de Lámpara</>}
+            {activeTab === 'image' && <><ImageIcon size={20} color="var(--accent)"/> Imagen y Proyección</>}
+            {activeTab === 'export' && <><Settings2 size={20} color="var(--accent)"/> Exportación</>}
+            {activeTab === 'additional' && <><Layers size={20} color="var(--accent)"/> Funciones Adicionales</>}
+          </h2>
+        </div>
+
+        <div className="panel-content">
+          
+          {/* ----- GLOBAL SETTINGS ----- */}
+          {activeTab === 'global' && (
+            <>
+              <div className="property-section">
+                <div className="property-section-title">Entorno</div>
+                <div className="control-group">
+                  <label>Color de la Pared</label>
+                  <select value={bgColor} onChange={(e) => setBgColor(e.target.value)}>
+                    <option value="#1e293b">Oscuro</option>
+                    <option value="#ffffff">Claro (Blanco)</option>
+                  </select>
+                </div>
+                <div className="control-group">
+                  <label>Color de la Luz (Validación)</label>
+                  <select value={lightFillColor} onChange={(e) => setLightFillColor(e.target.value)}>
+                    <option value="yellow">Luz Cálida</option>
+                    <option value="white">Luz Intensa (Blanco)</option>
+                    <option value="blue">Luz Fría (Neon)</option>
+                  </select>
+                </div>
+              </div>
+
+              <div className="property-section">
+                <div className="property-section-title">Parámetros Ópticos</div>
+                <div className="control-group">
+                  <label>Radio Bombilla (Luz) <span>{bulbRadius.toFixed(2)} cm</span></label>
+                  <div className="input-row">
+                    <input type="range" min="0.1" max={maxBulbRadius} step="0.1" value={Math.min(bulbRadius, maxBulbRadius)} onChange={(e) => setBulbRadius(parseFloat(e.target.value))} />
+                    <input type="number" min="0.1" max={maxBulbRadius} step="0.1" value={Math.min(bulbRadius, maxBulbRadius).toFixed(2)} onChange={(e) => setBulbRadius(parseFloat(e.target.value))} />
+                  </div>
+                </div>
+                <div className="control-group">
+                  <label>Distancia a la Pared <span>{distance} cm</span></label>
+                  <div className="input-row">
+                    <input type="range" min="2" max="30" step="1" value={distance} onChange={(e) => setDistance(parseFloat(e.target.value))} />
+                    <input type="number" min="2" max="30" step="1" value={distance} onChange={(e) => setDistance(parseFloat(e.target.value))} />
+                  </div>
+                </div>
+              </div>
+            </>
+          )}
+
+          {/* ----- LAMP SETTINGS ----- */}
+          {activeTab === 'lamp' && (
+            <>
+              <div className="property-section">
+                <div className="property-section-title">Forma Base</div>
+                <div className="control-group">
+                  <select value={shapeType} onChange={(e) => {
+                    setShapeType(e.target.value);
+                    if (e.target.value === 'box' && bulbRadius > Math.min(boxWidth / 2, boxDepth / 2) - thickness) {
+                      setBulbRadius(Math.max(0.1, Math.min(boxWidth / 2, boxDepth / 2) - thickness));
+                    } else if (e.target.value === 'cylinder' && bulbRadius > radius - thickness) {
+                      setBulbRadius(Math.max(0.1, radius - thickness));
+                    }
+                  }}>
+                    <option value="cylinder">Cilindro Clásico</option>
+                    <option value="box">Caja (Rectángulo Redondeado)</option>
+                  </select>
+                </div>
+
+                {shapeType === 'cylinder' ? (
+                  <div className="control-group">
+                    <label>Radio Cilindro <span>{radius} cm</span></label>
+                    <div className="input-row">
+                      <input type="range" min="1" max="10" step="0.1" value={radius} onChange={(e) => {
+                        const v = parseFloat(e.target.value); setRadius(v);
+                        if (bulbRadius > v - thickness) setBulbRadius(Math.max(0.1, v - thickness));
+                      }} />
+                      <input type="number" min="1" max="10" step="0.1" value={radius} onChange={(e) => setRadius(parseFloat(e.target.value))} />
+                    </div>
+                  </div>
+                ) : (
+                  <>
+                    <div className="control-group">
+                      <label>Ancho (X) <span>{boxWidth} cm</span></label>
+                      <div className="input-row">
+                        <input type="range" min="2" max="30" step="0.5" value={boxWidth} onChange={(e) => setBoxWidth(parseFloat(e.target.value))} />
+                        <input type="number" min="2" max="30" step="0.5" value={boxWidth} onChange={(e) => setBoxWidth(parseFloat(e.target.value))} />
+                      </div>
+                    </div>
+                    <div className="control-group">
+                      <label>Prof. (Y) <span>{boxDepth} cm</span></label>
+                      <div className="input-row">
+                        <input type="range" min="2" max="30" step="0.5" value={boxDepth} onChange={(e) => setBoxDepth(parseFloat(e.target.value))} />
+                        <input type="number" min="2" max="30" step="0.5" value={boxDepth} onChange={(e) => setBoxDepth(parseFloat(e.target.value))} />
+                      </div>
+                    </div>
+                    <div className="control-group">
+                      <label>Radio Esquina <span>{boxCornerRadius} cm</span></label>
+                      <div className="input-row">
+                        <input type="range" min="0" max={Math.min(boxWidth/2, boxDepth/2)} step="0.5" value={boxCornerRadius} onChange={(e) => setBoxCornerRadius(parseFloat(e.target.value))} />
+                        <input type="number" min="0" max={Math.min(boxWidth/2, boxDepth/2)} step="0.5" value={boxCornerRadius} onChange={(e) => setBoxCornerRadius(parseFloat(e.target.value))} />
+                      </div>
+                    </div>
+                  </>
+                )}
+              </div>
+
+              <div className="property-section">
+                <div className="property-section-title">Dimensiones</div>
+                <div className="control-group">
+                  <label>Altura <span>{height} cm</span></label>
+                  <div className="input-row">
+                    <input type="range" min="5" max="30" step="0.5" value={height} onChange={(e) => setHeight(parseFloat(e.target.value))} />
+                    <input type="number" min="5" max="30" step="0.5" value={height} onChange={(e) => setHeight(parseFloat(e.target.value))} />
+                  </div>
+                </div>
+                <div className="control-group">
+                  <label>Grosor Pared <span>{thickness} cm</span></label>
+                  <div className="input-row">
+                    <input type="range" min="0.1" max="2" step="0.05" value={thickness} onChange={(e) => {
+                      const t = parseFloat(e.target.value); setThickness(t);
+                      const b = shapeType === 'cylinder' ? radius : Math.min(boxWidth/2, boxDepth/2);
+                      if (bulbRadius > b - t) setBulbRadius(Math.max(0.1, b - t));
+                    }} />
+                    <input type="number" min="0.1" max="2" step="0.05" value={thickness} onChange={(e) => setThickness(parseFloat(e.target.value))} />
+                  </div>
+                </div>
+              </div>
+
+              <div className="property-section">
+                <div className="property-section-title">Puentes Estructurales</div>
+                <div className="control-group">
+                  <select value={supportType} onChange={(e) => setSupportType(e.target.value)}>
+                    <option value="none">Sin Puentes</option>
+                    <option value="vertical">Vertical (90°)</option>
+                    <option value="horizontal">Horizontal (0°)</option>
+                    <option value="diagonal_45">Diagonal (+45°)</option>
+                    <option value="diagonal_neg45">Diagonal (-45°)</option>
+                    <option value="grid">Cuadrícula Ortogonal</option>
+                    <option value="diagonal_cross">Malla Cruzada</option>
+                  </select>
+                </div>
+                <div className="control-group">
+                  <label>Grosor Puente <span>{supportThickness} mm</span></label>
+                  <input type="range" min="0.4" max="2.0" step="0.2" value={supportThickness} onChange={(e) => setSupportThickness(parseFloat(e.target.value))} />
+                </div>
+                <div className="control-group">
+                  <label>Espaciado <span>{supportSpacing} mm</span></label>
+                  <input type="range" min="2" max="50" step="1" value={supportSpacing} onChange={(e) => setSupportSpacing(parseFloat(e.target.value))} />
+                </div>
+              </div>
+            </>
+          )}
+
+          {/* ----- IMAGE SETTINGS ----- */}
+          {activeTab === 'image' && (
+            <>
+              <div className="property-section">
+                <div className="property-section-title">Archivo de Imagen</div>
+                <div style={{ display: 'flex', gap: '8px' }}>
+                  <label className="btn btn-primary" style={{ flex: 1, padding: '8px' }}>
+                    <Upload size={16} /> Subir
+                    <input type="file" accept="image/*" onChange={handleImageUpload} />
+                  </label>
+                  {uploadedImage && (
+                    <button className="btn btn-danger" onClick={handleRemoveImage} style={{ flex: 1, padding: '8px' }} title="Eliminar">
+                      <Trash2 size={16} /> Quitar
+                    </button>
+                  )}
+                </div>
+                <div className="info-box" style={{ marginTop: '8px' }}>
+                   * Se recomienda formato SVG para resolución de curvas en 3D infinita. Puedes manipular la imagen libremente en el viewport central.
+                </div>
+              </div>
+
+              <div className="property-section">
+                <div className="property-section-title">Transformaciones</div>
+                <div className="control-group">
+                  <label>Posición X <span>{imgOffsetX}</span></label>
+                  <div className="input-row">
+                    <input type="range" min="-50" max="50" step="0.5" value={imgOffsetX} onChange={(e) => setImgOffsetX(parseFloat(e.target.value))} />
+                    <input type="number" min="-50" max="50" step="0.5" value={imgOffsetX} onChange={(e) => setImgOffsetX(parseFloat(e.target.value))} />
+                  </div>
+                </div>
+                <div className="control-group">
+                  <label>Posición Y <span>{imgOffsetY}</span></label>
+                  <div className="input-row">
+                    <input type="range" min="-50" max="50" step="0.5" value={imgOffsetY} onChange={(e) => setImgOffsetY(parseFloat(e.target.value))} />
+                    <input type="number" min="-50" max="50" step="0.5" value={imgOffsetY} onChange={(e) => setImgOffsetY(parseFloat(e.target.value))} />
+                  </div>
+                </div>
+                <div className="control-group">
+                  <label>Escala X <span>{imgScaleX}</span></label>
+                  <div className="input-row">
+                    <input type="range" min="1" max="150" step="1" value={imgScaleX} onChange={(e) => setImgScaleX(parseFloat(e.target.value))} />
+                    <input type="number" min="1" max="150" step="1" value={imgScaleX} onChange={(e) => setImgScaleX(parseFloat(e.target.value))} />
+                  </div>
+                </div>
+                <div className="control-group">
+                  <label>Escala Y <span>{imgScaleY}</span></label>
+                  <div className="input-row">
+                    <input type="range" min="1" max="150" step="1" value={imgScaleY} onChange={(e) => setImgScaleY(parseFloat(e.target.value))} />
+                    <input type="number" min="1" max="150" step="1" value={imgScaleY} onChange={(e) => setImgScaleY(parseFloat(e.target.value))} />
+                  </div>
+                </div>
+                <div className="control-group">
+                  <label>Rotación <span>{imgRotation}°</span></label>
+                  <div className="input-row">
+                    <input type="range" min="-180" max="180" step="1" value={imgRotation} onChange={(e) => setImgRotation(parseFloat(e.target.value))} />
+                    <input type="number" min="-180" max="180" step="1" value={imgRotation} onChange={(e) => setImgRotation(parseFloat(e.target.value))} />
+                  </div>
+                </div>
+              </div>
+
+              <div className="property-section">
+                <div className="property-section-title">Modos Especiales</div>
+                <label className="checkbox-label">
+                  <input type="checkbox" checked={imgFlipX} onChange={(e) => setImgFlipX(e.target.checked)} /> Reflejar X
+                </label>
+                <label className="checkbox-label">
+                  <input type="checkbox" checked={imgFlipY} onChange={(e) => setImgFlipY(e.target.checked)} /> Reflejar Y
+                </label>
+                <label className="checkbox-label" style={{ marginTop: '8px', color: '#c084fc' }}>
+                  <input type="checkbox" checked={invertShadow} onChange={(e) => setInvertShadow(e.target.checked)} /> Invertir Hueco/Sólido
+                </label>
+              </div>
+            </>
+          )}
+
+          {/* ----- EXPORT SETTINGS ----- */}
+          {activeTab === 'export' && (
+            <>
+              <div className="property-section">
+                <div className="property-section-title">Opciones de Malla STL</div>
+                <div className="control-group">
+                  <label>Calidad Exportación (Resolución)</label>
+                  <select value={exportQuality} onChange={(e) => setExportQuality(e.target.value)}>
+                    <option value="low">Baja (Testeo Rápido)</option>
+                    <option value="medium">Media (Balanceada)</option>
+                    <option value="high">Alta (Recomendada)</option>
+                    <option value="ultra">Ultra (Detalle Máximo)</option>
+                  </select>
+                </div>
+                <div className="info-box" style={{ marginTop: '8px' }}>
+                  A mayor calidad, más pesado será el archivo STL y tardará más en generarse.
+                </div>
+              </div>
+
+              <div className="property-section" style={{ border: 'none', background: 'transparent', padding: '0' }}>
+                <button className="btn btn-success" onClick={handleExport} style={{ padding: '14px', fontSize: '0.95rem' }}>
+                  <Download size={20} />
+                  Descargar Archivo STL
+                </button>
+              </div>
+            </>
+          )}
+
+          {/* ----- ADDITIONAL SETTINGS ----- */}
+          {activeTab === 'additional' && (
+            <>
+              <div className="property-section">
+                <div className="property-section-title">En Desarrollo (Próximamente)</div>
+                <div className="info-box" style={{ marginBottom: '16px' }}>
+                  Estos controles son placeholders para futuras versiones. Por el momento solo ajustan su estado visual.
+                </div>
+                
+                <label className="checkbox-label">
+                  <input type="checkbox" /> Poste para sostener el bombillo
+                </label>
+                <label className="checkbox-label">
+                  <input type="checkbox" /> Agujero para colgar en pared
+                </label>
+                <label className="checkbox-label">
+                  <input type="checkbox" /> Generación de falsa tapa (Ocultar hardware)
+                </label>
+              </div>
+            </>
+          )}
+
+        </div>
       </div>
     </div>
+  </div>
   );
 }
 

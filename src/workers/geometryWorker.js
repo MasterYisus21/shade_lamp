@@ -29,7 +29,7 @@ async function handleCalculateHoles({ params, sourceImgData }) {
   const H = 1024;
   const alphaData = new Uint8ClampedArray(W * H * 4);
 
-  const rot = (params.imgRotation * Math.PI) / 180;
+  const rot = (-params.imgRotation * Math.PI) / 180;
   const cosR = Math.cos(rot);
   const sinR = Math.sin(rot);
 
@@ -250,7 +250,7 @@ async function handleExportSTL({ params, sourceImgData, exportQuality }) {
   if (exportQuality === 'high')  { nU = 1024; nV = 512;  }
   if (exportQuality === 'ultra') { nU = 2048; nV = 1024; }
 
-  const rot = (params.imgRotation * Math.PI) / 180;
+  const rot = (-params.imgRotation * Math.PI) / 180;
   const cosR = Math.cos(rot);
   const sinR = Math.sin(rot);
   const bgBright = params.bgColor === '#ffffff' ? 255 : 0;

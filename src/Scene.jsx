@@ -1,6 +1,6 @@
 import React, { useMemo, useEffect, useState, useRef } from 'react';
 import { Canvas } from '@react-three/fiber';
-import { OrbitControls, Grid, Line } from '@react-three/drei';
+import { OrbitControls, Grid, Line, TransformControls } from '@react-three/drei';
 import * as THREE from 'three';
 import { STLExporter } from 'three/examples/jsm/exporters/STLExporter.js';
 import * as BufferGeometryUtils from 'three/examples/jsm/utils/BufferGeometryUtils.js';
@@ -28,6 +28,7 @@ const generateTestTexture = () => {
 };
 
 export default function Scene({ 
+  activeTab, setActiveTab, onImageTransformChange,
   radius, shapeType, boxWidth, boxDepth, boxCornerRadius, height, thickness, distance, bulbRadius, uploadedImage, imageName,
   imgOffsetX, imgOffsetY, imgScaleX, imgScaleY, imgRotation,
   imgFlipX, imgFlipY,
@@ -35,7 +36,7 @@ export default function Scene({
   calculateTrigger, validateTrigger, resetPulse,
   exportTrigger, exportQuality,
   onCalculateComplete, onValidateComplete, onExportComplete, 
-  bgColor, lightFillColor
+  bgColor, lightFillColor, hideValidationMap
 }) {
   const [wallTex, setWallTex] = useState(null);
   const [sourceImgData, setSourceImgData] = useState(null);
@@ -44,9 +45,10 @@ export default function Scene({
   
   const defaultTexture = useMemo(() => generateTestTexture(), []);
   
-  // Ref to hold alpha array so validation can read it later without recalculating
   const alphaDataRef = useRef(null);
   const workerRef = useRef(null);
+  const imagePlaneRef = useRef(null);
+  const transformControlRef = useRef(null);
 
   useEffect(() => {
     workerRef.current = new Worker(new URL('./workers/geometryWorker.js', import.meta.url), { type: 'module' });
@@ -62,7 +64,7 @@ export default function Scene({
         const tex = new THREE.CanvasTexture(canvas);
         tex.wrapS = THREE.RepeatWrapping;
         setCylinderAlphaMap(tex);
-        alphaDataRef.current = data; // Guardamos el array crudo para el siguiente paso
+        alphaDataRef.current = data;
         if (onCalculateComplete) onCalculateComplete();
       } else if (type === 'VALIDATE_TRACE_COMPLETE') {
         const vCanvas = document.createElement('canvas');
@@ -91,8 +93,6 @@ export default function Scene({
           document.body.removeChild(link);
         }
         if (onExportComplete) onExportComplete();
-      } else if (type === 'EXPORT_PROGRESS') {
-        console.log(message);
       } else if (type === 'ERROR') {
         console.error("Worker error:", message);
         alert("Error en el cálculo 3D: " + message);
@@ -121,7 +121,6 @@ export default function Scene({
     };
   }, [radius, shapeType, boxWidth, boxDepth, boxCornerRadius, height, thickness, distance, imgOffsetX, imgOffsetY, imgScaleX, imgScaleY, imgRotation, imgFlipX, imgFlipY, invertShadow, supportType, supportThickness, supportSpacing, bgColor, imageName, lightFillColor]);
 
-  // Handle Reset 
   useEffect(() => {
     if (resetPulse > 0) {
       setCylinderAlphaMap(null);
@@ -130,7 +129,6 @@ export default function Scene({
     }
   }, [resetPulse]);
 
-  // Texture Loader
   useEffect(() => {
     if (uploadedImage) {
       new THREE.TextureLoader().load(uploadedImage, (tex) => {
@@ -142,10 +140,8 @@ export default function Scene({
       img.onload = () => {
         let targetW = img.width;
         let targetH = img.height;
-        
         const isSvg = uploadedImage.startsWith('data:image/svg+xml');
         const maxSize = Math.max(targetW || 1, targetH || 1);
-        
         if (isSvg || maxSize < 2048) {
              const scale = 2048 / maxSize;
              targetW = Math.max(1, Math.floor(targetW * scale));
@@ -172,21 +168,16 @@ export default function Scene({
     }
   }, [uploadedImage, defaultTexture]);
 
-  // 1. CALCULATE HOLES (Triggered by Button 1)
   useEffect(() => {
     if (calculateTrigger === 0 || !sourceImgData) return;
     if (workerRef.current) {
         workerRef.current.postMessage({
             type: 'CALCULATE_HOLES',
-            payload: {
-                params: paramsRef.current,
-                sourceImgData
-            }
+            payload: { params: paramsRef.current, sourceImgData }
         });
     }
   }, [calculateTrigger]); 
 
-  // 2. VALIDATE TRACE (Triggered by Button 2)
   useEffect(() => {
     if (validateTrigger === 0) return;
     if (!alphaDataRef.current) {
@@ -194,33 +185,23 @@ export default function Scene({
         if (onValidateComplete) onValidateComplete();
         return;
     }
-    
     if (workerRef.current) {
         workerRef.current.postMessage({
             type: 'VALIDATE_TRACE',
-            payload: {
-                params: paramsRef.current,
-                alphaDataRaw: alphaDataRef.current
-            }
+            payload: { params: paramsRef.current, alphaDataRaw: alphaDataRef.current }
         });
     }
   }, [validateTrigger]);
 
-  // 3. EXPORT STL GENERATION
   useEffect(() => {
     if (exportTrigger === 0 || !sourceImgData) return;
     if (workerRef.current) {
         workerRef.current.postMessage({
             type: 'EXPORT_STL',
-            payload: {
-                params: paramsRef.current,
-                sourceImgData,
-                exportQuality
-            }
+            payload: { params: paramsRef.current, sourceImgData, exportQuality }
         });
     }
   }, [exportTrigger]);
-
 
   const currentAlphaTest = cylinderAlphaMap ? 0.5 : 0;
 
@@ -295,71 +276,81 @@ export default function Scene({
   const capGeo = useMemo(() => morphBaseCap(), [shapeType, radius, boxWidth, boxDepth, boxCornerRadius, thickness]);
   const rimGeo = useMemo(() => morphRing(), [shapeType, radius, boxWidth, boxDepth, boxCornerRadius, thickness]);
 
+  // Click handlers to sync selection
+  const handleLampClick = (e) => {
+    e.stopPropagation();
+    if (setActiveTab) setActiveTab('lamp');
+  };
+
+  const handleWallClick = (e) => {
+    e.stopPropagation();
+    if (setActiveTab) setActiveTab('global');
+  };
+
+  const handleImageClick = (e) => {
+    e.stopPropagation();
+    if (setActiveTab) setActiveTab('image');
+  };
+
+  // The dragging-changed listener has been moved directly to TransformControls onMouseUp
+
   return (
-    // Fixed Camera position: Start at Z=-15 looking from the Origin perspective towards the Wall!!
-    <Canvas camera={{ position: [15, 10, -15], fov: 45 }}>
-      <color attach="background" args={['#0f172a']} />
+    <Canvas camera={{ position: [15, 10, -15], fov: 45 }} onPointerMissed={() => setActiveTab && setActiveTab('global')}>
+      <color attach="background" args={['transparent']} />
       
       <ambientLight intensity={0.5} />
       <pointLight position={[0, 0, 0]} intensity={10} color="#c084fc" distance={distance * 2} />
       
-      {/* We target looking at the wall (Z=distance) instead of (0,0,0) */}
       <OrbitControls target={[0, 0, distance]} makeDefault />
       <axesHelper args={[15]} />
       <Grid infiniteGrid fadeDistance={40} fadeStrength={5} cellColor="#334155" sectionColor="#475569" position={[0, -Math.max(height, boxWidth/2) - 1, 0]} />
 
-      {/* Origin Light Bulb */}
       <mesh position={[0, 0, 0]}>
         <sphereGeometry args={[bulbRadius, 32, 32]} />
         <meshBasicMaterial color="#fff" />
       </mesh>
 
       {/* The Cylinder */}
-      <mesh position={[0, 0, distance - height / 2]} rotation={[Math.PI / 2, 0, 0]} geometry={outerGeo}>
-        <meshStandardMaterial 
-          color={cylinderAlphaMap ? "#b4a9c1" : "#9b51e0"} 
-          transparent={true}
-          opacity={cylinderAlphaMap ? 1 : 0.3} 
-          alphaMap={cylinderAlphaMap}
-          alphaTest={currentAlphaTest}
-          side={THREE.DoubleSide} 
-        />
-      </mesh>
-      
-      {/* Inner Wall of Cylinder */}
-      <mesh position={[0, 0, distance - height / 2]} rotation={[Math.PI / 2, 0, 0]} geometry={innerGeo}>
-        <meshStandardMaterial 
-          color={cylinderAlphaMap ? "#e2dff5" : "#c084fc"} 
-          transparent={true}
-          opacity={cylinderAlphaMap ? 1 : 0.15} 
-          alphaMap={cylinderAlphaMap}
-          alphaTest={currentAlphaTest}
-          side={THREE.DoubleSide} 
-        />
-      </mesh>
+      <group onClick={handleLampClick}>
+        <mesh position={[0, 0, distance - height / 2]} rotation={[Math.PI / 2, 0, 0]} geometry={outerGeo}>
+          <meshStandardMaterial 
+            color={cylinderAlphaMap ? "#b4a9c1" : (activeTab === 'lamp' ? "#a855f7" : "#9b51e0")} 
+            transparent={true}
+            opacity={cylinderAlphaMap ? 1 : 0.4} 
+            alphaMap={cylinderAlphaMap}
+            alphaTest={currentAlphaTest}
+            side={THREE.DoubleSide} 
+          />
+        </mesh>
+        <mesh position={[0, 0, distance - height / 2]} rotation={[Math.PI / 2, 0, 0]} geometry={innerGeo}>
+          <meshStandardMaterial 
+            color={cylinderAlphaMap ? "#e2dff5" : "#c084fc"} 
+            transparent={true}
+            opacity={cylinderAlphaMap ? 1 : 0.15} 
+            alphaMap={cylinderAlphaMap}
+            alphaTest={currentAlphaTest}
+            side={THREE.DoubleSide} 
+          />
+        </mesh>
+        <mesh position={[0, 0, distance - height]} rotation={[0, Math.PI, 0]} geometry={rimGeo}>
+          <meshStandardMaterial 
+            color={cylinderAlphaMap ? "#b4a9c1" : "#9b51e0"}
+            transparent={true}
+            opacity={cylinderAlphaMap ? 1 : 0.3} 
+            side={THREE.DoubleSide} 
+          />
+        </mesh>
+        <mesh position={[0, 0, distance - thickness / 2]} rotation={[Math.PI / 2, 0, 0]} geometry={capGeo}>
+          <meshStandardMaterial color="#7e22ce" side={THREE.DoubleSide} />
+        </mesh>
+      </group>
 
-      {/* Top Cap Rim to seal the visual gap between Inner and Outer cylinders */}
-      <mesh position={[0, 0, distance - height]} rotation={[0, Math.PI, 0]} geometry={rimGeo}>
-        <meshStandardMaterial 
-          color={cylinderAlphaMap ? "#b4a9c1" : "#9b51e0"}
-          transparent={true}
-          opacity={cylinderAlphaMap ? 1 : 0.3} 
-          side={THREE.DoubleSide} 
-        />
-      </mesh>
-
-      {/* Solid Base Cap touching the wall */}
-      <mesh position={[0, 0, distance - thickness / 2]} rotation={[Math.PI / 2, 0, 0]} geometry={capGeo}>
-        <meshStandardMaterial color="#7e22ce" side={THREE.DoubleSide} />
-      </mesh>
-
-      {/* Generic dark Wall - pushed BACK slightly (Z = distance + 0.05) to naturally sit behind the Base Cap and Image plane */}
-      <mesh position={[0, 0, distance + 0.05]} receiveShadow>
+      {/* Generic dark Wall */}
+      <mesh position={[0, 0, distance + 0.05]} receiveShadow onClick={handleWallClick}>
         <planeGeometry args={[200, 200]} />
         <meshStandardMaterial color={bgColor || "#1e293b"} side={THREE.DoubleSide} />
       </mesh>
 
-      {/* 1 Meter Reference Bounds on the Wall */}
       <Line
         points={[
           [-50, -50, distance + 0.04],
@@ -373,12 +364,13 @@ export default function Scene({
         dashed={true}
       />
 
-      {/* Original Image Box Plane */}
-      {/* Plane is rotated to face the camera (-Z) normally, and flip vars invert this per axis */}
+      {/* Image Plane */}
       <mesh 
+        ref={imagePlaneRef}
         position={[imgOffsetX, imgOffsetY, distance]} 
         rotation={[imgFlipY ? Math.PI : 0, imgFlipX ? 0 : Math.PI, imgRotation * Math.PI / 180]}
         scale={[imgScaleX, imgScaleY, 1]}
+        onClick={handleImageClick}
       >
         <planeGeometry args={[1, 1]} />
         <meshBasicMaterial 
@@ -389,10 +381,36 @@ export default function Scene({
           color="#ffffff"
           side={THREE.DoubleSide}
         />
+        {/* Adds a gentle outline if selected */}
+        {activeTab === 'image' && (
+          <lineSegments>
+            <edgesGeometry args={[new THREE.PlaneGeometry(1, 1)]} />
+            <lineBasicMaterial color="#c084fc" linewidth={2} />
+          </lineSegments>
+        )}
       </mesh>
 
+      {/* Attach TransformControls dynamically when image is selected */}
+      {activeTab === 'image' && imagePlaneRef.current && (
+        <TransformControls 
+          ref={transformControlRef} 
+          object={imagePlaneRef} 
+          mode="translate" 
+          showZ={false}
+          size={0.6}
+          onMouseUp={(e) => {
+            if (imagePlaneRef.current && onImageTransformChange) {
+              onImageTransformChange({
+                x: imagePlaneRef.current.position.x,
+                y: imagePlaneRef.current.position.y,
+              });
+            }
+          }}
+        />
+      )}
+
       {/* Blue Contour Validation Overlay */}
-      {validationMap && (
+      {validationMap && !hideValidationMap && (
         <mesh position={[0, 0, distance - 0.01]}>
           <planeGeometry args={[100, 100]} />
           <meshBasicMaterial 
