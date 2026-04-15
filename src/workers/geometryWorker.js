@@ -1,8 +1,6 @@
 import * as THREE from 'three';
 import { STLExporter } from 'three/examples/jsm/exporters/STLExporter.js';
-import * as BufferGeometryUtils from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { getShapeRadius, getSubpixelValues } from '../utils/geometry.js';
-import { contours } from 'd3-contour';
 
 const yieldToEventLoop = () => new Promise(resolve => setTimeout(resolve, 0));
 
@@ -246,272 +244,223 @@ async function handleValidateTrace({ params, alphaDataRaw }) {
 
 
 async function handleExportSTL({ params, sourceImgData, exportQuality }) {
-  let W = 1024, H = 512;
-  if (exportQuality === 'low') { W = 512; H = 256; }
-  if (exportQuality === 'high') { W = 2048; H = 1024; }
-  if (exportQuality === 'ultra') { W = 4096; H = 2048; }
+  // Resolución de celdas del grid UV (no píxeles — cada celda genera hasta 4 quads 3D)
+  let nU = 512, nV = 256;
+  if (exportQuality === 'low')   { nU = 256;  nV = 128;  }
+  if (exportQuality === 'high')  { nU = 1024; nV = 512;  }
+  if (exportQuality === 'ultra') { nU = 2048; nV = 1024; }
 
-  const grid = new Float32Array(W * H);
   const rot = (params.imgRotation * Math.PI) / 180;
   const cosR = Math.cos(rot);
   const sinR = Math.sin(rot);
+  const bgBright = params.bgColor === '#ffffff' ? 255 : 0;
 
-  const arcLengths = new Float32Array(W);
-  let totalPerimeter = 0;
-  let prevX = getShapeRadius(0, params.shapeType, params.radius, params.boxWidth, params.boxDepth, params.boxCornerRadius) * Math.sin(0);
-  let prevY = -getShapeRadius(0, params.shapeType, params.radius, params.boxWidth, params.boxDepth, params.boxCornerRadius) * Math.cos(0);
-
-  for (let u = 1; u <= W; u++) {
-    const uMod = u % W;
-    const theta = (uMod / W) * 2 * Math.PI;
+  // --- Muestreo de brillo en el punto (fu, fv) del grid UV ---
+  const sampleBright = (fu, fv) => {
+    if (!sourceImgData) return bgBright;
+    const zNorm = 1.0 - fv / nV;
+    const Z = params.distance - params.height + zNorm * params.height;
+    if (Z <= 0.001) return bgBright;
+    const theta = (fu / nU) * 2 * Math.PI;
     const r = getShapeRadius(theta, params.shapeType, params.radius, params.boxWidth, params.boxDepth, params.boxCornerRadius);
-    const px = r * Math.sin(theta);
-    const py = -r * Math.cos(theta);
-    const dx = px - prevX;
-    const dy = py - prevY;
-    totalPerimeter += Math.sqrt(dx * dx + dy * dy);
-    if (u < W) arcLengths[u] = totalPerimeter;
-    prevX = px;
-    prevY = py;
-  }
-
-  const targetSpacing = params.supportSpacing / 10;
-  const nSupports = Math.max(1, Math.round(totalPerimeter / targetSpacing));
-  const adjustedSpacing = totalPerimeter / nSupports;
-
-  const sampleBrightAt = (su, sv) => {
-    const bgBright = params.bgColor === '#ffffff' ? 255 : 0;
-    const nV = 1.0 - sv / H;
-    const Z = params.distance - params.height + nV * params.height;
-    if (Z <= 0.001 || !sourceImgData) return bgBright;
-    const theta = (su / W) * 2 * Math.PI;
-    const cr = getShapeRadius(theta, params.shapeType, params.radius, params.boxWidth, params.boxDepth, params.boxCornerRadius);
-    const Px = cr * Math.sin(theta);
-    const Py = -cr * Math.cos(theta);
     const k = params.distance / Z;
-    const tx = Px * k - params.imgOffsetX;
-    const ty = Py * k - params.imgOffsetY;
-    
-    // Inverse of Euler 'XYZ' rotation:
+    const tx = r * Math.sin(theta) * k - params.imgOffsetX;
+    const ty = -r * Math.cos(theta) * k - params.imgOffsetY;
     let rx_z = tx * cosR + ty * sinR;
     let ry_z = -tx * sinR + ty * cosR;
-    
     if (!params.imgFlipX) rx_z = -rx_z;
-    if (params.imgFlipY) ry_z = -ry_z;
-
+    if (params.imgFlipY)  ry_z = -ry_z;
     const lx = rx_z / (params.imgScaleX || 1);
     const ly = ry_z / (params.imgScaleY || 1);
-    
     if (lx < -0.5 || lx > 0.5 || ly < -0.5 || ly > 0.5) return bgBright;
-    
-    const pX = (lx + 0.5) * sourceImgData.width;
-    const pY = (0.5 - ly) * sourceImgData.height;
-    const s = getSubpixelValues(sourceImgData, pX, pY);
+    const s = getSubpixelValues(sourceImgData,
+      (lx + 0.5) * sourceImgData.width,
+      (0.5 - ly) * sourceImgData.height);
     return s.bright * (s.alpha / 255) + bgBright * ((255 - s.alpha) / 255);
   };
 
-  for (let v = 0; v < H; v++) {
-    if (v > 0 && v % 32 === 0) {
-        self.postMessage({ type: 'EXPORT_PROGRESS', message: `Muestreo Subpixel (${Math.round((v/H)*100)}%)` });
-        await yieldToEventLoop();
+  // --- Longitudes de arco para puentes estructurales ---
+  const arcLengths = new Float32Array(nU);
+  let totalPerimeter = 0;
+  {
+    let px = getShapeRadius(0, params.shapeType, params.radius, params.boxWidth, params.boxDepth, params.boxCornerRadius) * Math.sin(0);
+    let py = -getShapeRadius(0, params.shapeType, params.radius, params.boxWidth, params.boxDepth, params.boxCornerRadius) * Math.cos(0);
+    for (let u = 1; u <= nU; u++) {
+      const t = ((u % nU) / nU) * 2 * Math.PI;
+      const r = getShapeRadius(t, params.shapeType, params.radius, params.boxWidth, params.boxDepth, params.boxCornerRadius);
+      const nx = r * Math.sin(t), ny = -r * Math.cos(t);
+      totalPerimeter += Math.hypot(nx - px, ny - py);
+      if (u < nU) arcLengths[u] = totalPerimeter;
+      px = nx; py = ny;
     }
+  }
+  const nSup = Math.max(1, Math.round(totalPerimeter / (params.supportSpacing / 10)));
+  const adjSpc = totalPerimeter / nSup;
+  const supThk = params.supportThickness / 10;
+  // Borde sólido: ~1 cm en cada extremo para dar estructura a la tapa y al aro
+  const rimSize = Math.max(2, Math.round(nV / params.height));
 
-    for (let u = 0; u < W; u++) {
-      const b00 = sampleBrightAt(u + 0.25, v + 0.25);
-      const b10 = sampleBrightAt(u + 0.75, v + 0.25);
-      const b01 = sampleBrightAt(u + 0.25, v + 0.75);
-      const b11 = sampleBrightAt(u + 0.75, v + 0.75);
-      const avgBright = (b00 + b10 + b01 + b11) * 0.25;
+  // --- Paso 1: Grid de sólido/hueco con 4× supersampling ---
+  const solid = new Uint8Array(nV * nU);
+  for (let v = 0; v < nV; v++) {
+    if (v % 64 === 0) {
+      self.postMessage({ type: 'EXPORT_PROGRESS', message: `Muestreo ${Math.round(v / nV * 100)}%` });
+      await yieldToEventLoop();
+    }
+    for (let u = 0; u < nU; u++) {
+      const avg = (
+        sampleBright(u + 0.25, v + 0.25) + sampleBright(u + 0.75, v + 0.25) +
+        sampleBright(u + 0.25, v + 0.75) + sampleBright(u + 0.75, v + 0.75)
+      ) * 0.25;
+      const bright = params.invertShadow ? (255 - avg) : avg;
+      let isSolid = bright >= 128;
 
-      let pixelVal = params.invertShadow ? (255 - avgBright) : avgBright;
-
-      // Un valor > 128 es sólido (blanco en la máscara original = block shadow)
-      // Ajustamos support logic para forzar a 255 si es soporte.
-      let isHole = pixelVal < 128;
-
-      if (isHole && params.supportType !== 'none') {
-        const arcLength = u === 0 ? 0 : arcLengths[u];
-        const zPos = (1.0 - v / H) * params.height;
-        const spacing = adjustedSpacing;
-        const thickness = params.supportThickness / 10;
-
-        let isSupport = false;
-
-        if (params.supportType === 'vertical' || params.supportType === 'grid') {
-          if (Math.abs(arcLength) % spacing < thickness) isSupport = true;
-        }
-        if (params.supportType === 'horizontal' || params.supportType === 'grid') {
-          if (Math.abs(zPos) % spacing < thickness) isSupport = true;
-        }
-        if (params.supportType === 'diagonal_45' || params.supportType === 'diagonal_cross') {
-          const d = arcLength * 0.7071 - zPos * 0.7071;
-          if (Math.abs(d) % spacing < thickness) isSupport = true;
-        }
-        if (params.supportType === 'diagonal_neg45' || params.supportType === 'diagonal_cross') {
-          const d = arcLength * 0.7071 + zPos * 0.7071;
-          if (Math.abs(d) % spacing < thickness) isSupport = true;
-        }
-
-        if (isSupport) pixelVal = 255;
+      // Bordes siempre sólidos (tapa superior + aro inferior)
+      if (v < rimSize || v >= nV - rimSize) {
+        isSolid = true;
+      } else if (!isSolid && params.supportType !== 'none') {
+        const aL = arcLengths[u];
+        const zP = (1.0 - v / nV) * params.height;
+        let isSup = false;
+        if ((params.supportType === 'vertical'      || params.supportType === 'grid')           && Math.abs(aL % adjSpc) < supThk) isSup = true;
+        if ((params.supportType === 'horizontal'    || params.supportType === 'grid')           && Math.abs(zP % adjSpc) < supThk) isSup = true;
+        if ((params.supportType === 'diagonal_45'   || params.supportType === 'diagonal_cross') && Math.abs((aL * 0.7071 - zP * 0.7071) % adjSpc) < supThk) isSup = true;
+        if ((params.supportType === 'diagonal_neg45'|| params.supportType === 'diagonal_cross') && Math.abs((aL * 0.7071 + zP * 0.7071) % adjSpc) < supThk) isSup = true;
+        if (isSup) isSolid = true;
       }
-
-      const rimSize = Math.max(2, Math.floor((10 / 512) * H));
-      if (v < rimSize || v > H - rimSize) {
-         pixelVal = 255;
-      }
-
-      grid[v * W + u] = pixelVal;
+      solid[v * nU + u] = isSolid ? 1 : 0;
     }
   }
 
-  self.postMessage({ type: 'EXPORT_PROGRESS', message: `Extrayendo contornos vectoriales (Marching Squares)` });
-  await yieldToEventLoop();
+  // --- Helpers de posición 3D ---
+  // Devuelven coordenadas en cm; se escalan ×10 → mm al exportar
+  const rOuter = (theta) => getShapeRadius(theta, params.shapeType,
+    params.radius, params.boxWidth, params.boxDepth, params.boxCornerRadius);
 
-  // El umbral es 128: separa lo sólido de lo hueco con precisión continua
-  const contourPaths = contours()
-    .size([W, H])
-    .thresholds([128])
-    (grid);
+  const rInner = (theta) => getShapeRadius(theta, params.shapeType,
+    Math.max(0.01, params.radius - params.thickness),
+    Math.max(0.02, params.boxWidth  - 2 * params.thickness),
+    Math.max(0.02, params.boxDepth  - 2 * params.thickness),
+    Math.max(0,    params.boxCornerRadius - params.thickness));
 
-  if (!contourPaths || contourPaths.length === 0) {
-      self.postMessage({ type: 'ERROR', message: "No se encontró geometría sólida."});
-      return;
-  }
-
-  const multiPolygons = contourPaths[0].coordinates;
-
-  self.postMessage({ type: 'EXPORT_PROGRESS', message: `Triangulando vectores en 2D (Earcut)` });
-  await yieldToEventLoop();
-
-  const simplifyRing = (ring) => {
-     if(ring.length <= 3) return ring;
-     const out = [ring[0]];
-     for(let i=1; i<ring.length-1; i++){
-        const pPrev = out[out.length-1];
-        const pCurr = ring[i];
-        const pNext = ring[i+1];
-        const area = Math.abs(pPrev[0]*(pCurr[1]-pNext[1]) + pCurr[0]*(pNext[1]-pPrev[1]) + pNext[0]*(pPrev[1]-pCurr[1]));
-        if(area > 0.05) { 
-           out.push(pCurr);
-        }
-     }
-     out.push(ring[ring.length-1]);
-     return out;
+  const outerPos = (u, v) => {
+    const theta = (((u % nU + nU) % nU) / nU) * 2 * Math.PI;
+    const z = params.distance - params.height + (1.0 - Math.max(0, Math.min(nV, v)) / nV) * params.height;
+    const r = rOuter(theta);
+    return [r * Math.sin(theta), -r * Math.cos(theta), z];
   };
 
-  const createPath = (ring) => {
-      const path = new THREE.Path();
-      const simpleRing = simplifyRing(ring);
-      for (let i = 0; i < simpleRing.length; i++) {
-        const x = simpleRing[i][0];
-        const y = simpleRing[i][1];
-        if (i === 0) path.moveTo(x, y);
-        else path.lineTo(x, y);
-      }
-      return path;
+  const innerPos = (u, v) => {
+    const theta = (((u % nU + nU) % nU) / nU) * 2 * Math.PI;
+    const z = params.distance - params.height + (1.0 - Math.max(0, Math.min(nV, v)) / nV) * params.height;
+    const r = rInner(theta);
+    return [r * Math.sin(theta), -r * Math.cos(theta), z];
   };
 
-  const shapeList = [];
-  
-  for (const polygon of multiPolygons) {
-    if (!polygon || polygon.length === 0) continue;
-    
-    // Anillo exterior
-    const outerRing = simplifyRing(polygon[0]);
-    const shape = new THREE.Shape();
-    
-    for (let i = 0; i < outerRing.length; i++) {
-        const x = outerRing[i][0];
-        const y = outerRing[i][1];
-        if (i === 0) shape.moveTo(x, y);
-        else shape.lineTo(x, y);
-    }
+  const getSolid = (u, v) => {
+    if (v < 0 || v >= nV) return false;
+    return solid[v * nU + ((u % nU + nU) % nU)] === 1;
+  };
 
-    // Huecos (anillos interiores)
-    for (let h = 1; h < polygon.length; h++) {
-        shape.holes.push(createPath(polygon[h]));
+  // --- Paso 2: Construcción directa de triángulos en 3D ---
+  //
+  // Cada celda sólida genera:
+  //   - 1 quad en pared exterior (normal apuntando hacia afuera)
+  //   - 1 quad en pared interior (normal apuntando hacia adentro)
+  //   - 0-2 quads de borde horizontal (tapa del hueco, normal ±Z)
+  //   - 0-2 quads de borde vertical   (tapa del hueco, normal ±theta)
+  //
+  // La tapa superior y el aro inferior se añaden al final.
+  // El resultado es una malla hermética sin fisuras ni deformaciones.
+  //
+  // Verificación de winding (regla de la mano derecha):
+  //   Pared exterior: tri(oo, o01, o1) → normal (sinθ, -cosθ, 0) = afuera ✓
+  //   Pared interior: tri(io, i1, i01) → normal (-sinθ, cosθ, 0) = adentro ✓
+  //   Borde inf sólido: tri(o01, i01, i11) → normal (0, 0, -1) = hacia el foco ✓
+  //   Borde sup sólido: tri(o01, i11, i01) → normal (0, 0, +1) = hacia la pared ✓
+  //   Borde der sólido: tri(o1, o11, i11)  → normal (+cosθ, +sinθ, 0) = +theta ✓
+  //   Borde izq sólido: tri(o1, i11, o11)  → normal (-cosθ, -sinθ, 0) = -theta ✓
+
+  const tris = [];
+  const tri = (p0, p1, p2) => {
+    tris.push(p0[0], p0[1], p0[2], p1[0], p1[1], p1[2], p2[0], p2[1], p2[2]);
+  };
+
+  for (let v = 0; v < nV; v++) {
+    if (v % 64 === 0) {
+      self.postMessage({ type: 'EXPORT_PROGRESS', message: `Triangulando ${Math.round(v / nV * 100)}%` });
+      await yieldToEventLoop();
     }
-    
-    shapeList.push(shape);
+    for (let u = 0; u < nU; u++) {
+      const s  = getSolid(u, v);
+      const sD = getSolid(u, v + 1); // celda de abajo
+      const sR = getSolid(u + 1, v); // celda de la derecha
+
+      if (s) {
+        const oo  = outerPos(u,   v);   const o1  = outerPos(u+1, v);
+        const o01 = outerPos(u,   v+1); const o11 = outerPos(u+1, v+1);
+        const io  = innerPos(u,   v);   const i1  = innerPos(u+1, v);
+        const i01 = innerPos(u,   v+1); const i11 = innerPos(u+1, v+1);
+
+        // Pared exterior (normal hacia afuera)
+        tri(oo, o01, o1);   tri(o01, o11, o1);
+        // Pared interior (normal hacia adentro — winding invertido)
+        tri(io, i1, i01);   tri(i01, i1, i11);
+
+        // Borde horizontal inferior: transición sólido → hueco
+        if (!sD) {
+          tri(o01, i01, i11);  tri(o01, i11, o11);
+        }
+        // Borde vertical derecho: transición sólido → hueco
+        if (!sR) {
+          tri(o1, o11, i11);  tri(o1, i11, i1);
+        }
+      } else {
+        // Celda hueca: si la vecina de abajo/derecha es sólida,
+        // generamos el borde desde el lado del hueco (winding invertido)
+        if (sD) {
+          const o01 = outerPos(u,   v+1); const o11 = outerPos(u+1, v+1);
+          const i01 = innerPos(u,   v+1); const i11 = innerPos(u+1, v+1);
+          tri(o01, i11, i01);  tri(o01, o11, i11);
+        }
+        if (sR) {
+          const o1  = outerPos(u+1, v);   const o11 = outerPos(u+1, v+1);
+          const i1  = innerPos(u+1, v);   const i11 = innerPos(u+1, v+1);
+          tri(o1, i11, o11);  tri(o1, i1, i11);
+        }
+      }
+    }
   }
 
-  // Tesselación extruida de los vectores
-  const extrudeSettings = {
-    steps: 1,
-    depth: params.thickness,
-    bevelEnabled: false
-  };
-
-  const geometry = new THREE.ExtrudeGeometry(shapeList, extrudeSettings);
-
-  self.postMessage({ type: 'EXPORT_PROGRESS', message: `Envolviendo geometría a 3D Cilíndrico` });
+  // --- Paso 3: Tapa superior (Z = distance, lado de la pared) — normal +Z ---
+  self.postMessage({ type: 'EXPORT_PROGRESS', message: 'Construyendo tapas...' });
   await yieldToEventLoop();
 
-  const posArr = geometry.attributes.position.array;
-  for (let i = 0; i < posArr.length; i += 3) {
-    const u = posArr[i];
-    const v = posArr[i + 1];
-    const z_ext = posArr[i + 2]; 
-
-    const inner = z_ext > (params.thickness * 0.5); 
-    
-    let u_clamped = Math.max(0, Math.min(W, u));
-    let v_clamped = Math.max(0, Math.min(H, v));
-
-    const theta = (u_clamped / W) * 2 * Math.PI;
-    const z_norm = 1.0 - (v_clamped / H);
-    const z_out = params.distance - params.height + z_norm * params.height;
-
-    const r_outer = getShapeRadius(theta, params.shapeType, params.radius, params.boxWidth, params.boxDepth, params.boxCornerRadius);
-    const r_inner = getShapeRadius(theta, params.shapeType, params.radius - params.thickness, params.boxWidth - 2 * params.thickness, params.boxDepth - 2 * params.thickness, Math.max(0, params.boxCornerRadius - params.thickness));
-
-    const R = inner ? r_inner : r_outer;
-    
-    posArr[i] = R * Math.sin(theta);
-    posArr[i + 1] = -R * Math.cos(theta);
-    posArr[i + 2] = z_out; 
-
-    // Rectificar el borde base en Y/Z (rim)
-    const isBoundary = Math.abs(z_out - params.distance) < 0.01 || Math.abs(z_out - (params.distance - params.height)) < 0.01;
-    if (inner && !isBoundary) {
-         posArr[i + 2] = z_out * (r_inner / r_outer);
-    }
+  for (let u = 0; u < nU; u++) {
+    const oa = outerPos(u,   0); const ob = outerPos(u+1, 0);
+    const ia = innerPos(u,   0); const ib = innerPos(u+1, 0);
+    tri(oa, ob, ib);  tri(oa, ib, ia);
   }
 
+  // Nota: el aro inferior (z = distance-height) ya lo genera el bucle principal
+  // cuando v = nV-1 es sólido y sD = getSolid(u, nV) = false (fuera de límites).
+  // No se añade aquí para evitar triángulos duplicados coplanares.
+
+  // --- Paso 4: Exportar ---
+  self.postMessage({ type: 'EXPORT_PROGRESS', message: 'Exportando STL...' });
+  await yieldToEventLoop();
+
+  const posData = new Float32Array(tris);
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute('position', new THREE.BufferAttribute(posData, 3));
   geometry.computeVertexNormals();
 
-  const shadeMesh = new THREE.Mesh(geometry, new THREE.MeshBasicMaterial());
-
-  const baseGeo = new THREE.CylinderGeometry(1, 1, params.thickness, W, 1, false);
-  const basePos = baseGeo.attributes.position.array;
-  for (let i = 0; i < basePos.length; i += 3) {
-    const bx = basePos[i], bz = basePos[i + 2];
-    const dist = Math.sqrt(bx * bx + bz * bz);
-    if (dist > 0.001) {
-      let th = Math.atan2(bx, bz);
-      const R = getShapeRadius(th, params.shapeType, params.radius, params.boxWidth, params.boxDepth, params.boxCornerRadius);
-      basePos[i] = (bx / dist) * R;
-      basePos[i + 2] = (bz / dist) * R;
-    }
-  }
-  baseGeo.computeVertexNormals();
-
-  const baseMesh = new THREE.Mesh(baseGeo, new THREE.MeshBasicMaterial());
-  baseMesh.rotation.set(Math.PI / 2, 0, 0);
-  baseMesh.position.set(0, 0, params.distance - params.thickness / 2);
-
-  baseMesh.updateMatrixWorld(true);
-  shadeMesh.updateMatrixWorld(true);
-
-  const group = new THREE.Group();
-  group.add(shadeMesh);
-  group.add(baseMesh);
-
-  group.scale.set(10, 10, 10);
-  group.updateMatrixWorld(true);
+  const mesh = new THREE.Mesh(geometry, new THREE.MeshBasicMaterial());
+  mesh.scale.set(10, 10, 10); // cm → mm
+  mesh.updateMatrixWorld(true);
 
   const exporter = new STLExporter();
-  const stlData = exporter.parse(group, { binary: true });
+  const stlData = exporter.parse(mesh, { binary: true });
 
   self.postMessage({ type: 'EXPORT_STL_COMPLETE', data: stlData.buffer, exportQuality }, [stlData.buffer]);
 }

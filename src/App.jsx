@@ -5,11 +5,11 @@ import './index.css';
 
 function App() {
   // Application State
-  const [radius, setRadius] = useState(3);
+  const [radius, setRadius] = useState(2);
   const [thickness, setThickness] = useState(0.2);
-  const [height, setHeight] = useState(10);
-  const [distance, setDistance] = useState(7);
-  const [bulbRadius, setBulbRadius] = useState(1);
+  const [height, setHeight] = useState(7);
+  const [distance, setDistance] = useState(5);
+  const [bulbRadius, setBulbRadius] = useState(0.5);
   const [uploadedImage, setUploadedImage] = useState(null);
   const [imageName, setImageName] = useState('sin_img');
   const [bgColor, setBgColor] = useState('#1e293b');
@@ -24,16 +24,16 @@ function App() {
   // Image Transform State
   const [imgOffsetX, setImgOffsetX] = useState(0);
   const [imgOffsetY, setImgOffsetY] = useState(0);
-  const [imgScaleX, setImgScaleX] = useState(20);
-  const [imgScaleY, setImgScaleY] = useState(20);
+  const [imgScaleX, setImgScaleX] = useState(50);
+  const [imgScaleY, setImgScaleY] = useState(50);
   const [imgRotation, setImgRotation] = useState(0);
   const [imgFlipX, setImgFlipX] = useState(false);
   const [imgFlipY, setImgFlipY] = useState(false);
 
   // Support Grid Configuration
-  const [supportType, setSupportType] = useState('grid'); // none, vertical, horizontal, diagonal_45, diagonal_-45, grid, diagonal_cross
-  const [supportThickness, setSupportThickness] = useState(0.4); // mm (min 0.2, max 0.8)
-  const [supportSpacing, setSupportSpacing] = useState(20); // mm
+  const [supportType, setSupportType] = useState('none'); // none, vertical, horizontal, diagonal_45, diagonal_-45, grid, diagonal_cross
+  const [supportThickness, setSupportThickness] = useState(0.8); // mm (min 0.2, max 0.8)
+  const [supportSpacing, setSupportSpacing] = useState(10); // mm
 
   // Ray-Casting Logic
   const [invertShadow, setInvertShadow] = useState(false);
@@ -391,10 +391,10 @@ function App() {
               onChange={(e) => setExportQuality(e.target.value)}
               style={{ background: 'var(--input-bg)', color: 'white', border: '1px solid var(--border)', borderRadius: '4px', padding: '0 8px' }}
             >
-              <option value="low">Calidad: Baja (256x128)</option>
-              <option value="medium">Calidad: Media (512x256)</option>
-              <option value="high">Calidad: Alta (1024x512)</option>
-              <option value="ultra">Calidad: Ultra (2048x1024)</option>
+              <option value="low">Calidad: Baja (256×128 celdas)</option>
+              <option value="medium">Calidad: Media (512×256 celdas)</option>
+              <option value="high">Calidad: Alta (1024×512 celdas)</option>
+              <option value="ultra">Calidad: Ultra (2048×1024 celdas)</option>
             </select>
             <button className="upload-btn" onClick={handleExport} style={{ background: '#10b981', flex: 1 }}>
               <Download size={18} />

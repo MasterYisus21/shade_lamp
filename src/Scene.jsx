@@ -81,7 +81,7 @@ export default function Scene({
         const fileName = window.prompt("Introduce el nombre del archivo STL a exportar:", defaultName);
         if (fileName !== null && fileName.trim() !== "") {
           const safeFileName = fileName.endsWith('.stl') ? fileName : `${fileName}.stl`;
-          const blob = new Blob([data], { type: 'text/plain' });
+          const blob = new Blob([data], { type: 'application/octet-stream' });
           const link = document.createElement('a');
           link.style.display = 'none';
           link.href = URL.createObjectURL(blob);
