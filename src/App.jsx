@@ -1,27 +1,60 @@
-import React, { useState } from 'react';
-import { Upload, Lightbulb, Calculator, Download, Loader2 } from 'lucide-react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
+import { Upload, Lightbulb, Download, Loader2, Eye, EyeOff } from 'lucide-react';
 import Scene from './Scene';
+import { createPreviewEngine, exportStl } from './engine/client';
+import { loadImageLuminance, defaultImage } from './engine/image';
+import { QUALITY } from './core/engine';
 import './index.css';
 
+function Slider({ label, unit, value, min, max, step, onChange, digits }) {
+  const shown = digits !== undefined ? Number(value).toFixed(digits) : value;
+  const handle = (e) => {
+    const v = parseFloat(e.target.value);
+    if (Number.isFinite(v)) onChange(Math.min(max, Math.max(min, v)));
+  };
+  return (
+    <div className="control-group">
+      <label>{label} <span>{shown} {unit}</span></label>
+      <div className="slider-row">
+        <input type="range" min={min} max={max} step={step} value={value} onChange={handle} />
+        <input type="number" min={min} max={max} step={step} value={shown} onChange={handle} />
+      </div>
+    </div>
+  );
+}
+
+function Section({ title, children }) {
+  return (
+    <div className="section">
+      <h3>{title}</h3>
+      {children}
+    </div>
+  );
+}
+
+const QUALITY_OPTIONS = ['low', 'medium', 'high', 'ultra'];
+
 function App() {
-  // Application State
-  const [radius, setRadius] = useState(3);
-  const [thickness, setThickness] = useState(0.2);
-  const [height, setHeight] = useState(10);
-  const [distance, setDistance] = useState(7);
-  const [bulbRadius, setBulbRadius] = useState(1);
-  const [uploadedImage, setUploadedImage] = useState(null);
-  const [imageName, setImageName] = useState('sin_img');
+  // Luz y pared (cm)
   const [bgColor, setBgColor] = useState('#1e293b');
   const [lightFillColor, setLightFillColor] = useState('yellow');
+  const [bulbRadius, setBulbRadius] = useState(1);
+  const [distance, setDistance] = useState(7);
 
-  // Box Shape State
-  const [shapeType, setShapeType] = useState('cylinder'); // 'cylinder' | 'box'
+  // Geometría (cm, grosores en mm)
+  const [shapeType, setShapeType] = useState('cylinder');
+  const [radius, setRadius] = useState(3);
   const [boxWidth, setBoxWidth] = useState(15);
   const [boxDepth, setBoxDepth] = useState(10);
   const [boxCornerRadius, setBoxCornerRadius] = useState(2);
+  const [height, setHeight] = useState(10);
+  const [thickness, setThickness] = useState(2);
+  const [rim, setRim] = useState(2);
 
-  // Image Transform State
+  // Imagen (cm)
+  const [uploadedImage, setUploadedImage] = useState(null);
+  const [imageName, setImageName] = useState('sin_img');
+  const [imageData, setImageData] = useState(() => defaultImage());
   const [imgOffsetX, setImgOffsetX] = useState(0);
   const [imgOffsetY, setImgOffsetY] = useState(0);
   const [imgScaleX, setImgScaleX] = useState(20);
@@ -29,408 +62,285 @@ function App() {
   const [imgRotation, setImgRotation] = useState(0);
   const [imgFlipX, setImgFlipX] = useState(false);
   const [imgFlipY, setImgFlipY] = useState(false);
-
-  // Support Grid Configuration
-  const [supportType, setSupportType] = useState('grid'); // none, vertical, horizontal, diagonal_45, diagonal_-45, grid, diagonal_cross
-  const [supportThickness, setSupportThickness] = useState(0.4); // mm (min 0.2, max 0.8)
-  const [supportSpacing, setSupportSpacing] = useState(20); // mm
-
-  // Ray-Casting Logic
   const [invertShadow, setInvertShadow] = useState(false);
-  const [calculateTrigger, setCalculateTrigger] = useState(0);
-  const [validateTrigger, setValidateTrigger] = useState(0);
-  const [resetPulse, setResetPulse] = useState(0);
 
-  // STL Export & Loading Logic
-  const [exportTrigger, setExportTrigger] = useState(0);
-  const [exportQuality, setExportQuality] = useState('medium');
-  const [loadingState, setLoadingState] = useState({ isLoading: false, title: '', description: '' });
+  // Puentes (mm)
+  const [supportType, setSupportType] = useState('none');
+  const [supportThickness, setSupportThickness] = useState(0.8);
+  const [supportSpacing, setSupportSpacing] = useState(20);
 
-  const maxBulbRadius = shapeType === 'cylinder'
-    ? Math.max(0.1, radius - thickness)
-    : Math.max(0.1, Math.min(boxWidth / 2, boxDepth / 2) - thickness);
+  // Vista previa y exportación
+  const [showWall, setShowWall] = useState(true);
+  const [preview, setPreview] = useState(null);
+  const [previewError, setPreviewError] = useState(null);
+  const [exportQuality, setExportQuality] = useState('high');
+  const [exportState, setExportState] = useState({ running: false, progress: 0, result: null, error: null });
+
+  // Límites físicos
+  const innerHalf = shapeType === 'cylinder' ? radius : Math.min(boxWidth, boxDepth) / 2;
+  const maxBulbRadius = Math.max(0.1, innerHalf - thickness / 10);
+  const effBulbRadius = Math.min(bulbRadius, maxBulbRadius);
+  const maxDistance = Math.max(1, height - 0.5); // el bombillo va dentro de la pantalla
+  const effDistance = Math.min(distance, maxDistance);
+  const maxCorner = Math.min(boxWidth, boxDepth) / 2;
+  const effCorner = Math.min(boxCornerRadius, maxCorner);
+  const maxThickness = Math.min(10, innerHalf * 10 * 0.5);
+  const effThickness = Math.min(thickness, maxThickness);
+
+  // Parámetros del motor, todo en mm
+  const engineParams = useMemo(() => ({
+    shape: shapeType === 'cylinder'
+      ? { type: 'cylinder', radius: radius * 10 }
+      : { type: 'box', width: boxWidth * 10, depth: boxDepth * 10, cornerRadius: effCorner * 10 },
+    thickness: effThickness,
+    height: height * 10,
+    distance: effDistance * 10,
+    rimWall: rim,
+    rimRoom: rim,
+    image: {
+      offsetX: imgOffsetX * 10,
+      offsetY: imgOffsetY * 10,
+      scaleX: imgScaleX * 10,
+      scaleY: imgScaleY * 10,
+      rotation: imgRotation,
+      flipX: imgFlipX,
+      flipY: imgFlipY,
+      invert: invertShadow,
+    },
+    bridges: { type: supportType, width: supportThickness, spacing: supportSpacing },
+  }), [shapeType, radius, boxWidth, boxDepth, effCorner, effThickness, height, effDistance, rim,
+    imgOffsetX, imgOffsetY, imgScaleX, imgScaleY, imgRotation, imgFlipX, imgFlipY, invertShadow,
+    supportType, supportThickness, supportSpacing]);
+
+  // Motor de vista previa (worker)
+  const engineRef = useRef(null);
+  useEffect(() => {
+    const engine = createPreviewEngine(
+      (msg) => { setPreview(msg); setPreviewError(null); },
+      (message) => setPreviewError(message),
+    );
+    engineRef.current = engine;
+    return () => engine.dispose();
+  }, []);
+
+  useEffect(() => {
+    engineRef.current?.setImage(imageData);
+  }, [imageData]);
+
+  useEffect(() => {
+    engineRef.current?.request(engineParams, showWall);
+  }, [engineParams, imageData, showWall]);
 
   const handleImageUpload = (e) => {
     const file = e.target.files[0];
-    if (file) {
-      setImageName(file.name.substring(0, file.name.lastIndexOf('.')) || file.name);
-      const reader = new FileReader();
-      reader.onload = (event) => {
+    if (!file) return;
+    setImageName(file.name.substring(0, file.name.lastIndexOf('.')) || file.name);
+    const reader = new FileReader();
+    reader.onload = async (event) => {
+      try {
+        const data = await loadImageLuminance(event.target.result);
         setUploadedImage(event.target.result);
-      };
-      reader.readAsDataURL(file);
-    }
+        setImageData(data);
+      } catch (err) {
+        alert(err.message);
+      }
+    };
+    reader.readAsDataURL(file);
+    e.target.value = '';
   };
 
   const handleRemoveImage = () => {
     setUploadedImage(null);
     setImageName('sin_img');
+    setImageData(defaultImage());
   };
 
-  const handleCalculate = () => {
-    setLoadingState({ isLoading: true, title: 'Calculando Geometría', description: 'Calculando proyección de sombras...' });
-    setTimeout(() => {
-      setCalculateTrigger(t => t + 1);
-    }, 150);
+  const handleExport = async () => {
+    setExportState({ running: true, progress: 0, result: null, error: null });
+    try {
+      const result = await exportStl(engineParams, imageData, exportQuality, (p) =>
+        setExportState((s) => ({ ...s, progress: p })),
+      );
+      const name = `lamp_${imageName}_${effDistance}cm_${exportQuality}.stl`;
+      const url = URL.createObjectURL(new Blob([result.buffer], { type: 'model/stl' }));
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = name;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      setTimeout(() => URL.revokeObjectURL(url), 10_000);
+      setExportState({ running: false, progress: 1, result: { ...result, name }, error: null });
+    } catch (err) {
+      console.error('Error generando STL:', err);
+      setExportState({ running: false, progress: 0, result: null, error: err.message });
+    }
   };
 
-  const handleValidate = () => {
-    setLoadingState({ isLoading: true, title: 'Validando Sombra', description: 'Trazando luz y sombra real...' });
-    setTimeout(() => {
-      setValidateTrigger(t => t + 1);
-    }, 150);
-  };
-
-  const handleReset = () => {
-    setResetPulse(p => p + 1);
-  };
-
-  const handleExport = () => {
-    setLoadingState({ isLoading: true, title: 'Generando Modelo STL...', description: 'Este proceso puede tardar unos segundos. Por favor espera.' });
-    // Timeout allows the UI to render the loading overlay before freezing the thread
-    setTimeout(() => {
-      setExportTrigger(t => t + 1);
-    }, 150);
-  };
+  const sceneSize = Math.max(height, shapeType === 'cylinder' ? radius : Math.max(boxWidth, boxDepth) / 2);
 
   return (
     <div className="app-container">
-      {/* Loading Overlay */}
-      {loadingState.isLoading && (
-        <div style={{
-          position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
-          backgroundColor: 'rgba(15, 23, 42, 0.9)', zIndex: 9999,
-          display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
-          color: 'white', fontFamily: 'sans-serif'
-        }}>
-          <Loader2 size={48} className="lucide-spin" style={{ animation: 'spin 2s linear infinite', marginBottom: '16px', color: '#c084fc' }} />
-          <style>{`@keyframes spin { 100% { transform: rotate(360deg); } }`}</style>
-          <h2 style={{ margin: '0 0 8px 0' }}>{loadingState.title}</h2>
-          <p style={{ color: '#94a3b8', margin: 0 }}>{loadingState.description}</p>
+      {exportState.running && (
+        <div className="overlay">
+          <Loader2 size={48} className="spin" />
+          <h2>Generando modelo STL…</h2>
+          <p>Calidad {QUALITY[exportQuality].label.toLowerCase()} · usando varios núcleos del procesador</p>
+          <div className="progress"><div style={{ width: `${Math.round(exportState.progress * 100)}%` }} /></div>
         </div>
       )}
 
-      {/* Sidebar Controls */}
       <div className="sidebar">
         <div className="header">
           <h1>Lámpara de Sombras 3D</h1>
           <p>Generador de Geometría STL</p>
         </div>
 
-        <div style={{ padding: '16px', background: 'rgba(0,0,0,0.2)', borderRadius: '8px', border: '1px solid var(--border)', display: 'flex', flexDirection: 'column', gap: '16px' }}>
-          <h3 style={{ fontSize: '14px', color: 'var(--text-main)', borderBottom: '1px solid var(--border)', paddingBottom: '8px', margin: 0 }}>Parámetros de la Luz y Pared</h3>
+        <Section title="Luz y pared">
           <div className="control-group">
-            <label>Color de la Pared (Lienzo)</label>
-            <select
-              value={bgColor}
-              onChange={(e) => setBgColor(e.target.value)}
-              style={{ background: 'var(--input-bg)', color: 'white', border: '1px solid var(--border)', borderRadius: '4px', padding: '4px 8px', width: '100%' }}
-            >
+            <label>Color de la pared (solo visual)</label>
+            <select value={bgColor} onChange={(e) => setBgColor(e.target.value)}>
               <option value="#1e293b">Oscuro</option>
-              <option value="#ffffff">Claro (Blanco)</option>
+              <option value="#ffffff">Claro (blanco)</option>
             </select>
           </div>
           <div className="control-group">
-            <label>Color de la Luz (Validación)</label>
-            <select
-              value={lightFillColor}
-              onChange={(e) => setLightFillColor(e.target.value)}
-              style={{ background: 'var(--input-bg)', color: 'white', border: '1px solid var(--border)', borderRadius: '4px', padding: '4px 8px', width: '100%' }}
-            >
-              <option value="yellow">Luz Cálida (Amarillento)</option>
-              <option value="white">Luz Intensa (Blanco)</option>
-              <option value="blue">Luz Fría (Neon Azul)</option>
+            <label>Color de la luz (solo visual)</label>
+            <select value={lightFillColor} onChange={(e) => setLightFillColor(e.target.value)}>
+              <option value="yellow">Luz cálida (amarillenta)</option>
+              <option value="white">Luz intensa (blanca)</option>
+              <option value="blue">Luz fría (neón azul)</option>
             </select>
           </div>
-          <div className="control-group">
-            <label>Radio de la Bombilla (Luz) <span>{bulbRadius.toFixed(2)} cm</span></label>
-            <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-              <input type="range" min="0.1" max={maxBulbRadius} step="0.1" value={Math.min(bulbRadius, maxBulbRadius)} onChange={(e) => setBulbRadius(parseFloat(e.target.value))} />
-              <input type="number" min="0.1" max={maxBulbRadius} step="0.1" value={Math.min(bulbRadius, maxBulbRadius).toFixed(2)} onChange={(e) => setBulbRadius(parseFloat(e.target.value))} style={{ width: '60px', padding: '4px', background: 'var(--input-bg)', color: 'white', border: '1px solid var(--border)', borderRadius: '4px' }} />
-            </div>
-          </div>
-          <div className="control-group">
-            <label>Distancia a la Pared de Proyección <span>{distance} cm</span></label>
-            <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-              <input type="range" min="2" max="20" step="1" value={distance} onChange={(e) => setDistance(parseFloat(e.target.value))} />
-              <input type="number" min="2" max="20" step="1" value={distance} onChange={(e) => setDistance(parseFloat(e.target.value))} style={{ width: '60px', padding: '4px', background: 'var(--input-bg)', color: 'white', border: '1px solid var(--border)', borderRadius: '4px' }} />
-            </div>
-          </div>
-        </div>
+          <Slider label="Radio del bombillo" unit="cm" value={effBulbRadius} min={0.1} max={maxBulbRadius} step={0.1} digits={1} onChange={setBulbRadius} />
+          <Slider label="Distancia bombillo → pared" unit="cm" value={effDistance} min={1} max={maxDistance} step={0.5} onChange={setDistance} />
+        </Section>
 
-        <div style={{ padding: '16px', background: 'rgba(0,0,0,0.2)', borderRadius: '8px', border: '1px solid var(--border)', display: 'flex', flexDirection: 'column', gap: '16px' }}>
-          <h3 style={{ fontSize: '14px', color: 'var(--text-main)', borderBottom: '1px solid var(--border)', paddingBottom: '8px', margin: 0 }}>Geometría de la Lámpara</h3>
-
+        <Section title="Geometría de la lámpara">
           <div className="control-group">
-            <label>Tipo de Lámpara</label>
-            <select
-              value={shapeType}
-              onChange={(e) => {
-                setShapeType(e.target.value);
-                if (e.target.value === 'box') {
-                  if (bulbRadius > Math.min(boxWidth / 2, boxDepth / 2) - thickness) {
-                    setBulbRadius(Math.max(0.1, Math.min(boxWidth / 2, boxDepth / 2) - thickness));
-                  }
-                } else {
-                  if (bulbRadius > radius - thickness) {
-                    setBulbRadius(Math.max(0.1, radius - thickness));
-                  }
-                }
-              }}
-              style={{ background: 'var(--input-bg)', color: 'white', border: '1px solid var(--border)', borderRadius: '4px', padding: '4px 8px', width: '100%' }}
-            >
-              <option value="cylinder">Cilindro Clásico</option>
-              <option value="box">Caja (Rectángulo Redondeado)</option>
+            <label>Tipo de lámpara</label>
+            <select value={shapeType} onChange={(e) => setShapeType(e.target.value)}>
+              <option value="cylinder">Cilindro</option>
+              <option value="box">Caja (rectángulo redondeado)</option>
             </select>
           </div>
-
           {shapeType === 'cylinder' ? (
-            <div className="control-group">
-              <label>Radio del Cilindro <span>{radius} cm</span></label>
-              <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-                <input type="range" min="1" max="10" step="0.1" value={radius} onChange={(e) => {
-                  const newRadius = parseFloat(e.target.value);
-                  setRadius(newRadius);
-                  if (bulbRadius > newRadius - thickness) setBulbRadius(Math.max(0.1, newRadius - thickness));
-                }} />
-                <input type="number" min="1" max="10" step="0.1" value={radius} onChange={(e) => {
-                  const newRadius = parseFloat(e.target.value);
-                  setRadius(newRadius);
-                  if (bulbRadius > newRadius - thickness) setBulbRadius(Math.max(0.1, newRadius - thickness));
-                }} style={{ width: '60px', padding: '4px', background: 'var(--input-bg)', color: 'white', border: '1px solid var(--border)', borderRadius: '4px' }} />
-              </div>
-            </div>
+            <Slider label="Radio del cilindro" unit="cm" value={radius} min={1} max={10} step={0.1} onChange={setRadius} />
           ) : (
             <>
-              <div className="control-group">
-                <label>Ancho de la Caja (X) <span>{boxWidth} cm</span></label>
-                <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-                  <input type="range" min="2" max="30" step="0.5" value={boxWidth} onChange={(e) => {
-                    const val = parseFloat(e.target.value);
-                    setBoxWidth(val);
-                    if (boxCornerRadius > Math.min(val / 2, boxDepth / 2)) setBoxCornerRadius(Math.max(0, Math.min(val / 2, boxDepth / 2)));
-                    if (bulbRadius > Math.min(val / 2, boxDepth / 2) - thickness) setBulbRadius(Math.max(0.1, Math.min(val / 2, boxDepth / 2) - thickness));
-                  }} />
-                  <input type="number" min="2" max="30" step="0.5" value={boxWidth} onChange={(e) => {
-                    const val = parseFloat(e.target.value);
-                    setBoxWidth(val);
-                    if (boxCornerRadius > Math.min(val / 2, boxDepth / 2)) setBoxCornerRadius(Math.max(0, Math.min(val / 2, boxDepth / 2)));
-                    if (bulbRadius > Math.min(val / 2, boxDepth / 2) - thickness) setBulbRadius(Math.max(0.1, Math.min(val / 2, boxDepth / 2) - thickness));
-                  }} style={{ width: '60px', padding: '4px', background: 'var(--input-bg)', color: 'white', border: '1px solid var(--border)', borderRadius: '4px' }} />
-                </div>
-              </div>
-              <div className="control-group">
-                <label>Profundidad (Y) <span>{boxDepth} cm</span></label>
-                <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-                  <input type="range" min="2" max="30" step="0.5" value={boxDepth} onChange={(e) => {
-                    const val = parseFloat(e.target.value);
-                    setBoxDepth(val);
-                    if (boxCornerRadius > Math.min(boxWidth / 2, val / 2)) setBoxCornerRadius(Math.max(0, Math.min(boxWidth / 2, val / 2)));
-                    if (bulbRadius > Math.min(boxWidth / 2, val / 2) - thickness) setBulbRadius(Math.max(0.1, Math.min(boxWidth / 2, val / 2) - thickness));
-                  }} />
-                  <input type="number" min="2" max="30" step="0.5" value={boxDepth} onChange={(e) => {
-                    const val = parseFloat(e.target.value);
-                    setBoxDepth(val);
-                    if (boxCornerRadius > Math.min(boxWidth / 2, val / 2)) setBoxCornerRadius(Math.max(0, Math.min(boxWidth / 2, val / 2)));
-                    if (bulbRadius > Math.min(boxWidth / 2, val / 2) - thickness) setBulbRadius(Math.max(0.1, Math.min(boxWidth / 2, val / 2) - thickness));
-                  }} style={{ width: '60px', padding: '4px', background: 'var(--input-bg)', color: 'white', border: '1px solid var(--border)', borderRadius: '4px' }} />
-                </div>
-              </div>
-              <div className="control-group">
-                <label>Radio de Esquina (Bordes) <span>{boxCornerRadius} cm</span></label>
-                <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-                  <input type="range" min="0" max={Math.min(boxWidth / 2, boxDepth / 2)} step="0.5" value={boxCornerRadius} onChange={(e) => setBoxCornerRadius(parseFloat(e.target.value))} />
-                  <input type="number" min="0" max={Math.min(boxWidth / 2, boxDepth / 2)} step="0.5" value={boxCornerRadius} onChange={(e) => setBoxCornerRadius(parseFloat(e.target.value))} style={{ width: '60px', padding: '4px', background: 'var(--input-bg)', color: 'white', border: '1px solid var(--border)', borderRadius: '4px' }} />
-                </div>
-              </div>
+              <Slider label="Ancho (X)" unit="cm" value={boxWidth} min={2} max={30} step={0.5} onChange={setBoxWidth} />
+              <Slider label="Profundidad (Y)" unit="cm" value={boxDepth} min={2} max={30} step={0.5} onChange={setBoxDepth} />
+              <Slider label="Radio de esquina" unit="cm" value={effCorner} min={0} max={maxCorner} step={0.25} onChange={setBoxCornerRadius} />
             </>
           )}
-          <div className="control-group">
-            <label>Altura del Cilindro <span>{height} cm</span></label>
-            <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-              <input type="range" min="5" max="20" step="0.5" value={height} onChange={(e) => setHeight(parseFloat(e.target.value))} />
-              <input type="number" min="5" max="20" step="0.5" value={height} onChange={(e) => setHeight(parseFloat(e.target.value))} style={{ width: '60px', padding: '4px', background: 'var(--input-bg)', color: 'white', border: '1px solid var(--border)', borderRadius: '4px' }} />
-            </div>
-          </div>
-          <div className="control-group">
-            <label>Grosor de la Pared <span>{thickness} cm</span></label>
-            <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-              <input type="range" min="0.1" max="1" step="0.05" value={thickness} onChange={(e) => {
-                const newThickness = parseFloat(e.target.value);
-                setThickness(newThickness);
-                const boundRad = shapeType === 'cylinder' ? radius : Math.min(boxWidth / 2, boxDepth / 2);
-                if (bulbRadius > boundRad - newThickness) setBulbRadius(Math.max(0.1, boundRad - newThickness));
-              }} />
-              <input type="number" min="0.1" max="1" step="0.05" value={thickness} onChange={(e) => {
-                const newThickness = parseFloat(e.target.value);
-                setThickness(newThickness);
-                const boundRad = shapeType === 'cylinder' ? radius : Math.min(boxWidth / 2, boxDepth / 2);
-                if (bulbRadius > boundRad - newThickness) setBulbRadius(Math.max(0.1, boundRad - newThickness));
-              }} style={{ width: '60px', padding: '4px', background: 'var(--input-bg)', color: 'white', border: '1px solid var(--border)', borderRadius: '4px' }} />
-            </div>
-          </div>
-        </div>
+          <Slider label="Altura (desde la pared)" unit="cm" value={height} min={2} max={30} step={0.5} onChange={setHeight} />
+          <Slider label="Grosor de la pared" unit="mm" value={effThickness} min={0.8} max={maxThickness} step={0.1} digits={1} onChange={setThickness} />
+          <Slider label="Aro sólido en los extremos" unit="mm" value={rim} min={0.5} max={10} step={0.5} onChange={setRim} />
+        </Section>
 
-        <div style={{ padding: '16px', background: 'rgba(0,0,0,0.2)', borderRadius: '8px', border: '1px solid var(--border)', display: 'flex', flexDirection: 'column', gap: '16px' }}>
-          <h3 style={{ fontSize: '14px', color: 'var(--text-main)', borderBottom: '1px solid var(--border)', paddingBottom: '8px', margin: 0 }}>Controles de Proyección de Imagen</h3>
-
-          <div style={{ display: 'flex', gap: '12px' }}>
-            <label className="upload-btn" style={{ flex: 1, padding: '8px', fontSize: '12px' }}>
-              <Upload size={14} />
-              Subir Imagen
+        <Section title="Imagen proyectada">
+          <div className="button-row">
+            <label className="btn btn-small">
+              <Upload size={14} /> Subir imagen
               <input type="file" accept="image/*" onChange={handleImageUpload} />
             </label>
             {uploadedImage && (
-              <button className="upload-btn" onClick={handleRemoveImage} style={{ flex: 1, background: '#ef4444', padding: '8px', fontSize: '12px' }}>
-                Eliminar Imagen
-              </button>
+              <button className="btn btn-small btn-danger" onClick={handleRemoveImage}>Quitar imagen</button>
             )}
           </div>
-          <small style={{ color: 'var(--text-main)', opacity: 0.8, fontSize: '12px', marginTop: '-10px' }}>
-            <strong>Recomendación:</strong> Usa imágenes <strong>SVG</strong> para obtener cortes con curvas perfectas de máxima resolución en tu modelo 3D.
+          <small className="hint">
+            Imágenes en blanco y negro. Con <strong>SVG</strong> los bordes salen más limpios. Lo transparente cuenta como blanco.
           </small>
+          <Slider label="Ancho en la pared" unit="cm" value={imgScaleX} min={1} max={150} step={1} onChange={setImgScaleX} />
+          <Slider label="Alto en la pared" unit="cm" value={imgScaleY} min={1} max={150} step={1} onChange={setImgScaleY} />
+          <Slider label="Desplazamiento X" unit="cm" value={imgOffsetX} min={-70} max={70} step={0.5} onChange={setImgOffsetX} />
+          <Slider label="Desplazamiento Y" unit="cm" value={imgOffsetY} min={-70} max={70} step={0.5} onChange={setImgOffsetY} />
+          <Slider label="Rotación" unit="°" value={imgRotation} min={-180} max={180} step={1} onChange={setImgRotation} />
+          <div className="checks">
+            <label><input type="checkbox" checked={imgFlipX} onChange={(e) => setImgFlipX(e.target.checked)} /> Reflejar X</label>
+            <label><input type="checkbox" checked={imgFlipY} onChange={(e) => setImgFlipY(e.target.checked)} /> Reflejar Y</label>
+          </div>
+          <div className="control-group">
+            <label>Lo negro de la imagen será</label>
+            <select value={invertShadow ? 'shadow' : 'light'} onChange={(e) => setInvertShadow(e.target.value === 'shadow')}>
+              <option value="light">Luz en la pared (huecos)</option>
+              <option value="shadow">Sombra en la pared (material)</option>
+            </select>
+          </div>
+        </Section>
 
+        <Section title="Puentes (soportes)">
           <div className="control-group">
-            <label>Escala Horizontal (X) <span>{imgScaleX} cm</span></label>
-            <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-              <input type="range" min="1" max="100" step="1" value={imgScaleX} onChange={(e) => setImgScaleX(parseFloat(e.target.value))} />
-              <input type="number" min="1" max="100" step="1" value={imgScaleX} onChange={(e) => setImgScaleX(parseFloat(e.target.value))} style={{ width: '60px', padding: '4px', background: 'var(--input-bg)', color: 'white', border: '1px solid var(--border)', borderRadius: '4px' }} />
-            </div>
-          </div>
-          <div className="control-group">
-            <label>Escala Vertical (Y) <span>{imgScaleY} cm</span></label>
-            <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-              <input type="range" min="1" max="100" step="1" value={imgScaleY} onChange={(e) => setImgScaleY(parseFloat(e.target.value))} />
-              <input type="number" min="1" max="100" step="1" value={imgScaleY} onChange={(e) => setImgScaleY(parseFloat(e.target.value))} style={{ width: '60px', padding: '4px', background: 'var(--input-bg)', color: 'white', border: '1px solid var(--border)', borderRadius: '4px' }} />
-            </div>
-          </div>
-          <div className="control-group">
-            <label>Desplazamiento X <span>{imgOffsetX} cm</span></label>
-            <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-              <input type="range" min="-50" max="50" step="0.5" value={imgOffsetX} onChange={(e) => setImgOffsetX(parseFloat(e.target.value))} />
-              <input type="number" min="-50" max="50" step="0.5" value={imgOffsetX} onChange={(e) => setImgOffsetX(parseFloat(e.target.value))} style={{ width: '60px', padding: '4px', background: 'var(--input-bg)', color: 'white', border: '1px solid var(--border)', borderRadius: '4px' }} />
-            </div>
-          </div>
-          <div className="control-group">
-            <label>Desplazamiento Y <span>{imgOffsetY} cm</span></label>
-            <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-              <input type="range" min="-50" max="50" step="0.5" value={imgOffsetY} onChange={(e) => setImgOffsetY(parseFloat(e.target.value))} />
-              <input type="number" min="-50" max="50" step="0.5" value={imgOffsetY} onChange={(e) => setImgOffsetY(parseFloat(e.target.value))} style={{ width: '60px', padding: '4px', background: 'var(--input-bg)', color: 'white', border: '1px solid var(--border)', borderRadius: '4px' }} />
-            </div>
-          </div>
-          <div className="control-group">
-            <label>Rotación <span>{imgRotation}°</span></label>
-            <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-              <input type="range" min="-180" max="180" step="1" value={imgRotation} onChange={(e) => setImgRotation(parseFloat(e.target.value))} />
-              <input type="number" min="-180" max="180" step="1" value={imgRotation} onChange={(e) => setImgRotation(parseFloat(e.target.value))} style={{ width: '60px', padding: '4px', background: 'var(--input-bg)', color: 'white', border: '1px solid var(--border)', borderRadius: '4px' }} />
-            </div>
-          </div>
-
-          <div style={{ display: 'flex', gap: '16px', marginTop: '8px' }}>
-            <label style={{ display: 'flex', alignItems: 'center', gap: '8px', color: 'var(--text-main)', fontSize: '14px', cursor: 'pointer' }}>
-              <input type="checkbox" checked={imgFlipX} onChange={(e) => setImgFlipX(e.target.checked)} style={{ transform: 'scale(1.2)' }} />
-              Reflejar X
-            </label>
-            <label style={{ display: 'flex', alignItems: 'center', gap: '8px', color: 'var(--text-main)', fontSize: '14px', cursor: 'pointer' }}>
-              <input type="checkbox" checked={imgFlipY} onChange={(e) => setImgFlipY(e.target.checked)} style={{ transform: 'scale(1.2)' }} />
-              Reflejar Y
-            </label>
-          </div>
-
-          <label style={{ display: 'flex', alignItems: 'center', gap: '8px', color: 'var(--text-main)', fontSize: '14px', marginTop: '8px', cursor: 'pointer' }}>
-            <input type="checkbox" checked={invertShadow} onChange={(e) => setInvertShadow(e.target.checked)} style={{ transform: 'scale(1.2)' }} />
-            Invertir Sombra (Huecos vs Sólidos)
-          </label>
-        </div>
-
-        <div style={{ padding: '16px', background: 'rgba(0,0,0,0.2)', borderRadius: '8px', border: '1px solid var(--border)', display: 'flex', flexDirection: 'column', gap: '12px', marginTop: '16px' }}>
-          <h3 style={{ fontSize: '14px', color: 'var(--text-main)', borderBottom: '1px solid var(--border)', paddingBottom: '8px', margin: 0 }}>Puentes (Soportes Físicos)</h3>
-
-          <div className="control-group">
-            <label>Tipo de Puente</label>
-            <select
-              value={supportType}
-              onChange={(e) => setSupportType(e.target.value)}
-              style={{ background: 'var(--input-bg)', color: 'white', border: '1px solid var(--border)', borderRadius: '4px', padding: '4px 8px', width: '100%' }}
-            >
-              <option value="none">Sin Puentes</option>
-              <option value="vertical">Vertical (90°)</option>
-              <option value="horizontal">Horizontal (0°)</option>
+            <label>Tipo de puente</label>
+            <select value={supportType} onChange={(e) => setSupportType(e.target.value)}>
+              <option value="none">Sin puentes</option>
+              <option value="vertical">Vertical</option>
+              <option value="horizontal">Horizontal</option>
               <option value="diagonal_45">Diagonal (+45°)</option>
-              <option value="diagonal_neg45">Diagonal (-45°)</option>
-              <option value="grid">Cuadrícula Ortogonal</option>
-              <option value="diagonal_cross">Malla Cruzada</option>
+              <option value="diagonal_neg45">Diagonal (−45°)</option>
+              <option value="grid">Cuadrícula</option>
+              <option value="diagonal_cross">Malla cruzada</option>
             </select>
           </div>
+          {supportType !== 'none' && (
+            <>
+              <Slider label="Grosor del puente" unit="mm" value={supportThickness} min={0.4} max={3} step={0.1} digits={1} onChange={setSupportThickness} />
+              <Slider label="Separación entre puentes" unit="mm" value={supportSpacing} min={3} max={60} step={1} onChange={setSupportSpacing} />
+            </>
+          )}
+        </Section>
 
+        <Section title="Exportar">
           <div className="control-group">
-            <label>Grosor del Puente <span>{supportThickness} mm</span></label>
-            <input type="range" min="0.6" max="1.6" step="0.2" value={supportThickness} onChange={(e) => setSupportThickness(parseFloat(e.target.value))} />
-          </div>
-
-          <div className="control-group">
-            <label>Espaciado entre puentes <span>{supportSpacing} mm</span></label>
-            <input type="range" min="2" max="50" step="1" value={supportSpacing} onChange={(e) => setSupportSpacing(parseFloat(e.target.value))} />
-          </div>
-        </div>
-
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginTop: '16px' }}>
-          <button className="upload-btn" onClick={handleCalculate} style={{ background: '#9b51e0' }}>
-            <Calculator size={18} />
-            1. Generar Vista Previa (Recortar Matriz)
-          </button>
-
-          <button className="upload-btn" onClick={handleValidate} style={{ background: '#2563eb' }}>
-            <Lightbulb size={18} />
-            2. Trazar Sombra Real (Contorno Azul)
-          </button>
-
-          <div style={{ display: 'flex', gap: '8px', marginTop: '16px' }}>
-            <select
-              value={exportQuality}
-              onChange={(e) => setExportQuality(e.target.value)}
-              style={{ background: 'var(--input-bg)', color: 'white', border: '1px solid var(--border)', borderRadius: '4px', padding: '0 8px' }}
-            >
-              <option value="low">Calidad: Baja (256x128)</option>
-              <option value="medium">Calidad: Media (512x256)</option>
-              <option value="high">Calidad: Alta (1024x512)</option>
-              <option value="ultra">Calidad: Ultra (2048x1024)</option>
+            <label>Calidad del STL</label>
+            <select value={exportQuality} onChange={(e) => setExportQuality(e.target.value)}>
+              {QUALITY_OPTIONS.map((k) => (
+                <option key={k} value={k}>{QUALITY[k].label} (celda {QUALITY[k].cell} mm)</option>
+              ))}
             </select>
-            <button className="upload-btn" onClick={handleExport} style={{ background: '#10b981', flex: 1 }}>
-              <Download size={18} />
-              3. Descargar STL
-            </button>
           </div>
-
-          <button className="upload-btn" onClick={handleReset} style={{ background: '#475569', marginTop: '16px' }}>
-            Restablecer Memoria (Borrar Previsualizaciones)
+          <button className="btn btn-export" onClick={handleExport} disabled={exportState.running}>
+            <Download size={18} /> Descargar STL
           </button>
-        </div>
+          {exportState.result && (
+            <small className="hint">
+              {exportState.result.name}: {exportState.result.triangles.toLocaleString('es')} triángulos,{' '}
+              {(exportState.result.buffer.byteLength / 1e6).toFixed(1)} MB, {(exportState.result.ms / 1000).toFixed(1)} s
+              {exportState.result.coarsened && ` · celda ampliada a ${exportState.result.cell.toFixed(3)} mm por el tamaño de la lámpara`}
+            </small>
+          )}
+          {exportState.error && <small className="hint error">Error: {exportState.error}</small>}
+        </Section>
 
         <div className="info-box">
-          <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '8px', color: 'var(--text-main)' }}>
+          <div className="info-title">
             <Lightbulb size={16} color="var(--accent)" />
-            <strong>Restricciones Lógicas (Geometría)</strong>
+            <strong>Cómo funciona</strong>
           </div>
-          El origen de la luz se encuentra en [0,0,0]. La pared de proyección en Z = {distance} cm.
-          El bombillo (radio interno máximo) debe ser más pequeño que el interior de la lámpara.
+          El bombillo está en el origen y la pared a {effDistance} cm. La pantalla sale de la pared {height} cm,
+          así que el bombillo queda {(height - effDistance).toFixed(1)} cm dentro de ella. Los huecos se orientan hacia
+          el bombillo para que el grosor no recorte la sombra.
         </div>
       </div>
 
-      {/* Main Viewport for Three.js */}
       <div className="viewport">
+        <div className="viewport-bar">
+          <button className="btn btn-small btn-ghost" onClick={() => setShowWall((v) => !v)}>
+            {showWall ? <EyeOff size={14} /> : <Eye size={14} />}
+            {showWall ? 'Ocultar luz proyectada' : 'Mostrar luz proyectada'}
+          </button>
+          {preview && (
+            <span className="badge">
+              Vista previa: {preview.stats.triangles.toLocaleString('es')} triángulos · celda {preview.stats.cell.toFixed(2)} mm · {preview.stats.ms.toFixed(0)} ms
+            </span>
+          )}
+          {previewError && <span className="badge error">Error: {previewError}</span>}
+        </div>
         <Scene
-          radius={radius}
-          shapeType={shapeType}
-          boxWidth={boxWidth}
-          boxDepth={boxDepth}
-          boxCornerRadius={boxCornerRadius}
-          thickness={thickness}
-          height={height}
-          distance={distance}
-          bulbRadius={Math.min(bulbRadius, maxBulbRadius)}
-          uploadedImage={uploadedImage}
-          imageName={imageName}
+          lampTris={preview?.tris}
+          wall={preview?.wall}
+          showWall={showWall}
+          image={imageData}
           imgOffsetX={imgOffsetX}
           imgOffsetY={imgOffsetY}
           imgScaleX={imgScaleX}
@@ -438,18 +348,10 @@ function App() {
           imgRotation={imgRotation}
           imgFlipX={imgFlipX}
           imgFlipY={imgFlipY}
-          invertShadow={invertShadow}
-          supportType={supportType}
-          supportThickness={supportThickness}
-          supportSpacing={supportSpacing}
-          calculateTrigger={calculateTrigger}
-          validateTrigger={validateTrigger}
-          resetPulse={resetPulse}
-          exportTrigger={exportTrigger}
-          exportQuality={exportQuality}
-          onCalculateComplete={() => setLoadingState({ isLoading: false, title: '', description: '' })}
-          onValidateComplete={() => setLoadingState({ isLoading: false, title: '', description: '' })}
-          onExportComplete={() => setLoadingState({ isLoading: false, title: '', description: '' })}
+          distance={effDistance}
+          height={height}
+          bulbRadius={effBulbRadius}
+          sceneSize={sceneSize}
           bgColor={bgColor}
           lightFillColor={lightFillColor}
         />
