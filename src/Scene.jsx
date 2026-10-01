@@ -132,8 +132,10 @@ export default function Scene({
       {imageTex && (
         <mesh
           position={[imgOffsetX, imgOffsetY, distance + 0.02]}
-          rotation={[imgFlipY ? Math.PI : 0, imgFlipX ? 0 : Math.PI, (imgRotation * Math.PI) / 180]}
-          scale={[imgScaleX, imgScaleY, 1]}
+          // Igual que el motor: primero se refleja la imagen en su propio eje (escala
+          // negativa), luego se rota, y el giro de 180° en Y la orienta hacia la habitación.
+          rotation={[0, Math.PI, (imgRotation * Math.PI) / 180]}
+          scale={[imgFlipX ? -imgScaleX : imgScaleX, imgFlipY ? -imgScaleY : imgScaleY, 1]}
         >
           <planeGeometry args={[1, 1]} />
           <meshBasicMaterial map={imageTex} transparent opacity={showShadow ? 0.18 : 0.9} depthWrite={false} side={THREE.DoubleSide} />
