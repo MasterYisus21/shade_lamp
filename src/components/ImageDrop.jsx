@@ -2,6 +2,7 @@
 
 import React, { useEffect, useRef, useState } from 'react';
 import { ImagePlus, X } from 'lucide-react';
+import { useI18n } from '../i18n';
 
 function Thumbnail({ image }) {
   const ref = useRef(null);
@@ -32,6 +33,7 @@ function Thumbnail({ image }) {
 }
 
 export default function ImageDrop({ image, name, isCustom, onFile, onRemove }) {
+  const { t } = useI18n();
   const [over, setOver] = useState(false);
   const inputRef = useRef(null);
 
@@ -54,15 +56,15 @@ export default function ImageDrop({ image, name, isCustom, onFile, onRemove }) {
         <Thumbnail image={image} />
       </div>
       <div className="drop-info">
-        <span className="drop-name">{isCustom ? name : 'Imagen de prueba (cruz)'}</span>
+        <span className="drop-name">{isCustom ? name : t('image.sample')}</span>
         <span className="hint">{image.width} × {image.height} px</span>
-        <span className="drop-cta"><ImagePlus size={14} /> {isCustom ? 'Cambiar imagen' : 'Subir o arrastrar imagen'}</span>
+        <span className="drop-cta"><ImagePlus size={14} /> {isCustom ? t('image.change') : t('image.upload')}</span>
       </div>
       {isCustom && (
         <button
           type="button"
           className="drop-remove"
-          title="Quitar imagen"
+          title={t('image.remove')}
           onClick={(e) => { e.stopPropagation(); onRemove(); }}
         >
           <X size={14} />

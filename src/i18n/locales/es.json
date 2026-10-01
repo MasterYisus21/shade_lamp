@@ -1,0 +1,169 @@
+{
+  "_meta": {
+    "name": "Español",
+    "locale": "es"
+  },
+  "app": {
+    "title": "Lámpara de Sombras",
+    "subtitle": "Pantallas que proyectan tu imagen · STL para imprimir",
+    "documentTitle": "Lámpara de Sombras 3D",
+    "description": "Diseña pantallas de lámpara que proyectan tu imagen como sombra y expórtalas en STL para imprimir en 3D.",
+    "language": "Idioma"
+  },
+  "tabs": {
+    "image": "Imagen",
+    "lamp": "Lámpara",
+    "bridges": "Puentes",
+    "parts": "Piezas"
+  },
+  "parts": {
+    "shade": "Pantalla",
+    "cap": "Tapa",
+    "base": "Base",
+    "post": "Poste"
+  },
+  "files": {
+    "lamp": "lampara",
+    "sample": "prueba",
+    "shade": "pantalla",
+    "cap": "tapa",
+    "base": "base",
+    "post": "poste"
+  },
+  "quality": {
+    "draft": "Borrador",
+    "low": "Baja",
+    "medium": "Media",
+    "high": "Alta",
+    "ultra": "Ultra"
+  },
+  "lights": {
+    "warm": "Cálida",
+    "white": "Blanca",
+    "cold": "Fría"
+  },
+  "image": {
+    "title": "Imagen",
+    "hint": "Usa imágenes en blanco y negro. Con SVG los bordes salen más limpios; lo transparente cuenta como blanco.",
+    "sample": "Imagen de prueba (cruz)",
+    "change": "Cambiar imagen",
+    "upload": "Subir o arrastrar imagen",
+    "remove": "Quitar imagen",
+    "readError": "No se pudo leer la imagen"
+  },
+  "interpretation": {
+    "title": "Interpretación",
+    "label": "Lo negro de la imagen será",
+    "light": "Luz",
+    "shadow": "Sombra",
+    "hintLight": "Las zonas negras se iluminan: la lámpara las recorta como huecos.",
+    "hintShadow": "Las zonas negras quedan en sombra: la lámpara las tapa con material."
+  },
+  "position": {
+    "title": "Posición en la pared",
+    "aspectLocked": "Proporción bloqueada",
+    "aspectFree": "Proporción libre",
+    "width": "Ancho",
+    "height": "Alto",
+    "x": "Posición X",
+    "y": "Posición Y",
+    "rotation": "Rotación",
+    "drag": "Mover con el mouse",
+    "dragHint": "Arrastra la imagen sobre la pared en la vista 3D. Fuera de la imagen, la cámara gira como siempre.",
+    "flipX": "Reflejar X",
+    "flipY": "Reflejar Y"
+  },
+  "lamp": {
+    "shape": "Forma",
+    "cylinder": "Cilindro",
+    "box": "Caja",
+    "radius": "Radio",
+    "width": "Ancho",
+    "depth": "Profundidad",
+    "cornerRadius": "Radio de esquina",
+    "height": "Altura",
+    "thickness": "Grosor de pared",
+    "rim": "Aro de los extremos",
+    "rimHint": "El aro se amplía para cubrir el labio de la base y la tapa ({lip} mm + 1 mm)."
+  },
+  "bulb": {
+    "title": "Bombillo",
+    "distance": "Distancia a la pared",
+    "radius": "Radio del bombillo",
+    "note": "El bombillo queda {depth} cm dentro de la pantalla. Los huecos se orientan hacia él para que el grosor no recorte la sombra. Un LED pequeño da bordes más nítidos."
+  },
+  "bridges": {
+    "title": "Puentes",
+    "hint": "Los puentes sujetan las partes que quedarían sueltas (como el centro de una “O”).",
+    "thickness": "Grosor",
+    "spacing": "Separación",
+    "types": {
+      "none": "Sin puentes",
+      "vertical": "Verticales",
+      "horizontal": "Horizontales",
+      "diagonal_45": "Diagonal +45°",
+      "diagonal_neg45": "Diagonal −45°",
+      "grid": "Cuadrícula",
+      "diagonal_cross": "Malla cruzada"
+    }
+  },
+  "partsTab": {
+    "title": "Piezas encastrables",
+    "toggle": "Generar base, tapa y poste",
+    "toggleHint": "La base va contra la pared y sostiene el poste hueco del bombillo (por dentro pasa el cable). La tapa cierra el lado de la habitación.",
+    "fitTitle": "Ajuste de impresión",
+    "printType": "Tipo de impresión",
+    "resin": "Resina",
+    "clearance": "Holgura del encastre",
+    "clearanceHint": "Espacio entre el labio y la pantalla. Más holgura = encaja más suelto.",
+    "sizes": "Medidas",
+    "baseThickness": "Grosor de la base",
+    "capThickness": "Grosor de la tapa",
+    "lipLength": "Largo del labio",
+    "postDiameter": "Diámetro del poste",
+    "cable": "Paso de cable"
+  },
+  "export": {
+    "target": "Qué exportar",
+    "all": "Todas las piezas (ZIP)",
+    "quality": "Calidad del STL",
+    "qualityParts": "La calidad solo afecta a la pantalla",
+    "buttonAll": "Exportar todo",
+    "buttonOne": "Exportar {part}",
+    "generatingShade": "Generando la pantalla",
+    "generatingAll": "Generando las piezas",
+    "modalText": "Calidad {quality} · usando varios núcleos del procesador",
+    "doneShade": "{name} · {triangles} triángulos · {mb} MB · {seconds} s",
+    "doneAll": "{name} · {count} piezas · {mb} MB · {seconds} s",
+    "coarsened": " · celda ampliada a {cell} mm por el tamaño",
+    "donePart": "{name} descargado",
+    "error": "No se pudo generar el STL: {message}"
+  },
+  "loading": {
+    "title": "Cargando la imagen",
+    "read": "Leyendo la imagen",
+    "raster": "Rasterizando el SVG",
+    "prepare": "Preparando la imagen",
+    "gray": "Convirtiendo a escala de grises",
+    "lamp": "Calculando la lámpara"
+  },
+  "viewer": {
+    "show": "Mostrar {part}",
+    "hide": "Ocultar {part}",
+    "wallLight": "Luz en la pared",
+    "moveImage": "Mover imagen",
+    "moveImageTitle": "Arrastrar la imagen sobre la pared con el mouse",
+    "explode": "Separar",
+    "assemble": "Ensamblar",
+    "wall": "Pared",
+    "wallDark": "Pared oscura",
+    "wallBright": "Pared clara",
+    "light": "Luz",
+    "lightColor": "Luz {color}",
+    "center": "Centrar vista",
+    "preview": "Vista previa · {triangles} triángulos · celda {cell} mm · {ms} ms",
+    "computing": "Calculando…",
+    "error": "Error: {message}",
+    "close": "Cerrar"
+  }
+}

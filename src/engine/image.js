@@ -24,13 +24,14 @@ function decode(src) {
 
 /**
  * @param {File} file
- * @param {(progress: number, stage: string) => void} [onProgress] progreso 0..1
+ * @param {(progress: number, stage: string) => void} [onProgress] progreso 0..1 y
+ *   etapa ('read' | 'raster' | 'prepare' | 'gray', claves de loading.* en i18n)
  */
 export async function loadImageLuminance(file, onProgress = () => {}) {
   const isSvg = file.type === 'image/svg+xml' || /\.svg$/i.test(file.name);
   const url = URL.createObjectURL(file);
   try {
-    onProgress(0.05, 'Leyendo la imagen');
+    onProgress(0.05, 'read');
     await nextFrame();
     const img = await decode(url);
 
@@ -41,7 +42,7 @@ export async function loadImageLuminance(file, onProgress = () => {}) {
     w = Math.max(1, Math.round(w * scale));
     h = Math.max(1, Math.round(h * scale));
 
-    onProgress(0.2, isSvg ? 'Rasterizando el SVG' : 'Preparando la imagen');
+    onProgress(0.2, isSvg ? 'raster' : 'prepare');
     await nextFrame();
     const canvas = document.createElement('canvas');
     canvas.width = w;
@@ -52,7 +53,7 @@ export async function loadImageLuminance(file, onProgress = () => {}) {
 
     const lum = new Uint8Array(w * h);
     for (let start = 0; start < lum.length; start += CHUNK) {
-      onProgress(0.35 + 0.45 * (start / lum.length), 'Convirtiendo a escala de grises');
+      onProgress(0.35 + 0.45 * (start / lum.length), 'gray');
       await nextFrame();
       const end = Math.min(lum.length, start + CHUNK);
       for (let p = start, i = start * 4; p < end; i += 4, p++) {
@@ -61,7 +62,7 @@ export async function loadImageLuminance(file, onProgress = () => {}) {
         lum[p] = Math.round(l * a + 255 * (1 - a));
       }
     }
-    onProgress(0.8, 'Convirtiendo a escala de grises');
+    onProgress(0.8, 'gray');
     return { lum, width: w, height: h };
   } finally {
     URL.revokeObjectURL(url);

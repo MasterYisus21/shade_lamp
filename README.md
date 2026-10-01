@@ -36,6 +36,20 @@ configuraciones aleatorias:
 node scripts/check-mesh.mjs medium 200
 ```
 
+## Idiomas
+
+Los textos de la interfaz están en `src/i18n/locales/`, un archivo JSON por
+idioma (`es.json`, `en.json`). Para añadir otro:
+
+1. Copia `es.json` con el código del idioma como nombre (`fr.json`, `pt-br.json`…).
+2. Cambia `_meta.name` (lo que se ve en el selector) y `_meta.locale` (formato
+   de números, p. ej. `fr`).
+3. Traduce los textos. Las claves que falten se muestran en español; los
+   `{nombres}` entre llaves son valores que pone la app y deben conservarse.
+
+El idioma aparece en el selector sin tocar el código. La app recuerda la
+elección y, la primera vez, usa el idioma del navegador si está disponible.
+
 ## Estructura
 
 | Carpeta | Contenido |
@@ -43,6 +57,7 @@ node scripts/check-mesh.mjs medium 200
 | `src/core/` | Motor geométrico sin dependencias del navegador: perfil de la forma, campo sólido/hueco, mallado, piezas y STL. |
 | `src/engine/` | Workers, carga de imágenes y exportación en paralelo. |
 | `src/components/` | Componentes de la interfaz. |
+| `src/i18n/` | Traducciones (un JSON por idioma en `locales/`). |
 | `src/Scene.jsx` | Visor 3D (react-three-fiber). |
 | `scripts/` | Herramientas de verificación. |
 

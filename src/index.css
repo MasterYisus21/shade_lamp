@@ -107,6 +107,48 @@ button {
   font-size: 12px;
 }
 
+.brand-text {
+  flex: 1;
+  min-width: 0;
+}
+
+/* Selector de idioma */
+.lang {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  flex: none;
+  align-self: flex-start;
+  height: 28px;
+  padding: 0 8px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--bg-0);
+  color: var(--text-1);
+  cursor: pointer;
+}
+
+.lang:hover,
+.lang:focus-within {
+  border-color: var(--border-strong);
+  color: var(--text-0);
+}
+
+.lang select {
+  appearance: none;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.lang select option {
+  background: var(--bg-1);
+}
+
 .tabs {
   display: grid;
   grid-template-columns: repeat(4, 1fr);
@@ -607,10 +649,20 @@ button {
   height: 38px;
 }
 
-.export-parts {
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 6px;
+.export-target {
+  flex: 1;
+  min-width: 0;
+  height: 38px;
+}
+
+.select:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.export > .btn-primary {
+  flex: none;
+  width: 100%;
 }
 
 .btn {
@@ -643,19 +695,6 @@ button {
 
 .btn-primary:hover:not(:disabled) {
   background: var(--accent-strong);
-}
-
-.btn-secondary {
-  height: 32px;
-  border: 1px solid var(--border-strong);
-  background: var(--bg-2);
-  color: var(--text-1);
-  font-size: 12px;
-}
-
-.btn-secondary:hover {
-  color: var(--text-0);
-  border-color: var(--text-2);
 }
 
 /* ───────────── Visor ───────────── */

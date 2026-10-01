@@ -1,0 +1,169 @@
+{
+  "_meta": {
+    "name": "English",
+    "locale": "en"
+  },
+  "app": {
+    "title": "Shadow Lamp",
+    "subtitle": "Lamp shades that project your image · STL for printing",
+    "documentTitle": "Shadow Lamp 3D",
+    "description": "Design lamp shades that project your image as a shadow and export them as STL for 3D printing.",
+    "language": "Language"
+  },
+  "tabs": {
+    "image": "Image",
+    "lamp": "Lamp",
+    "bridges": "Bridges",
+    "parts": "Parts"
+  },
+  "parts": {
+    "shade": "Shade",
+    "cap": "Cap",
+    "base": "Base",
+    "post": "Post"
+  },
+  "files": {
+    "lamp": "lamp",
+    "sample": "sample",
+    "shade": "shade",
+    "cap": "cap",
+    "base": "base",
+    "post": "post"
+  },
+  "quality": {
+    "draft": "Draft",
+    "low": "Low",
+    "medium": "Medium",
+    "high": "High",
+    "ultra": "Ultra"
+  },
+  "lights": {
+    "warm": "Warm",
+    "white": "White",
+    "cold": "Cool"
+  },
+  "image": {
+    "title": "Image",
+    "hint": "Use black and white images. SVG gives cleaner edges; transparent areas count as white.",
+    "sample": "Sample image (cross)",
+    "change": "Change image",
+    "upload": "Upload or drop an image",
+    "remove": "Remove image",
+    "readError": "The image could not be read"
+  },
+  "interpretation": {
+    "title": "Interpretation",
+    "label": "Black areas of the image will be",
+    "light": "Light",
+    "shadow": "Shadow",
+    "hintLight": "Black areas get lit: the lamp cuts them out as holes.",
+    "hintShadow": "Black areas stay in shadow: the lamp covers them with material."
+  },
+  "position": {
+    "title": "Position on the wall",
+    "aspectLocked": "Aspect ratio locked",
+    "aspectFree": "Aspect ratio free",
+    "width": "Width",
+    "height": "Height",
+    "x": "Position X",
+    "y": "Position Y",
+    "rotation": "Rotation",
+    "drag": "Move with the mouse",
+    "dragHint": "Drag the image across the wall in the 3D view. Outside the image, the camera orbits as usual.",
+    "flipX": "Mirror X",
+    "flipY": "Mirror Y"
+  },
+  "lamp": {
+    "shape": "Shape",
+    "cylinder": "Cylinder",
+    "box": "Box",
+    "radius": "Radius",
+    "width": "Width",
+    "depth": "Depth",
+    "cornerRadius": "Corner radius",
+    "height": "Height",
+    "thickness": "Wall thickness",
+    "rim": "End rim",
+    "rimHint": "The rim grows to cover the lip of the base and cap ({lip} mm + 1 mm)."
+  },
+  "bulb": {
+    "title": "Bulb",
+    "distance": "Distance to the wall",
+    "radius": "Bulb radius",
+    "note": "The bulb sits {depth} cm inside the shade. Holes are angled toward it so the wall thickness doesn't clip the shadow. A small LED gives sharper edges."
+  },
+  "bridges": {
+    "title": "Bridges",
+    "hint": "Bridges hold parts that would otherwise fall out (like the middle of an “O”).",
+    "thickness": "Thickness",
+    "spacing": "Spacing",
+    "types": {
+      "none": "No bridges",
+      "vertical": "Vertical",
+      "horizontal": "Horizontal",
+      "diagonal_45": "Diagonal +45°",
+      "diagonal_neg45": "Diagonal −45°",
+      "grid": "Grid",
+      "diagonal_cross": "Cross-hatch"
+    }
+  },
+  "partsTab": {
+    "title": "Snap-fit parts",
+    "toggle": "Generate base, cap and post",
+    "toggleHint": "The base goes against the wall and holds the hollow bulb post (the cable runs inside). The cap closes the room side.",
+    "fitTitle": "Print fit",
+    "printType": "Print type",
+    "resin": "Resin",
+    "clearance": "Fit clearance",
+    "clearanceHint": "Gap between the lip and the shade. More clearance = looser fit.",
+    "sizes": "Dimensions",
+    "baseThickness": "Base thickness",
+    "capThickness": "Cap thickness",
+    "lipLength": "Lip length",
+    "postDiameter": "Post diameter",
+    "cable": "Cable hole"
+  },
+  "export": {
+    "target": "What to export",
+    "all": "All parts (ZIP)",
+    "quality": "STL quality",
+    "qualityParts": "Quality only affects the shade",
+    "buttonAll": "Export all",
+    "buttonOne": "Export {part}",
+    "generatingShade": "Generating the shade",
+    "generatingAll": "Generating the parts",
+    "modalText": "{quality} quality · using several CPU cores",
+    "doneShade": "{name} · {triangles} triangles · {mb} MB · {seconds} s",
+    "doneAll": "{name} · {count} parts · {mb} MB · {seconds} s",
+    "coarsened": " · cell enlarged to {cell} mm due to size",
+    "donePart": "{name} downloaded",
+    "error": "The STL could not be generated: {message}"
+  },
+  "loading": {
+    "title": "Loading image",
+    "read": "Reading the image",
+    "raster": "Rasterizing the SVG",
+    "prepare": "Preparing the image",
+    "gray": "Converting to grayscale",
+    "lamp": "Computing the lamp"
+  },
+  "viewer": {
+    "show": "Show {part}",
+    "hide": "Hide {part}",
+    "wallLight": "Light on wall",
+    "moveImage": "Move image",
+    "moveImageTitle": "Drag the image across the wall with the mouse",
+    "explode": "Explode",
+    "assemble": "Assemble",
+    "wall": "Wall",
+    "wallDark": "Dark wall",
+    "wallBright": "Light wall",
+    "light": "Light",
+    "lightColor": "{color} light",
+    "center": "Center view",
+    "preview": "Preview · {triangles} triangles · cell {cell} mm · {ms} ms",
+    "computing": "Computing…",
+    "error": "Error: {message}",
+    "close": "Close"
+  }
+}

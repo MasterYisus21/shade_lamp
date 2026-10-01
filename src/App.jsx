@@ -2,7 +2,7 @@ import React, { useState, useEffect, useMemo, useRef } from 'react';
 import {
   Image as ImageIcon, Lamp, Grid3x3, Puzzle, Download, Eye, EyeOff, LoaderCircle, Cylinder, Box,
   FlipHorizontal2, FlipVertical2, Lock, Unlock, Sun, Moon, Focus, Expand, Shrink, Lightbulb, Check,
-  TriangleAlert, Info, X, Move,
+  TriangleAlert, Info, X, Move, Languages,
 } from 'lucide-react';
 import Scene from './Scene';
 import { LIGHT_COLORS } from './theme';
@@ -12,37 +12,31 @@ import { createPreviewEngine, exportStl, exportPartStl } from './engine/client';
 import { loadImageLuminance, defaultImage } from './engine/image';
 import { QUALITY } from './core/engine';
 import { DEFAULT_PARTS } from './core/parts';
+import { zipFiles } from './engine/zip';
+import { useI18n, setLanguage, LANGUAGES } from './i18n';
 import './index.css';
 
 // Holgura del encastre según el tipo de impresión (mm)
+// Los textos de la interfaz están en src/i18n/locales (labelKey = clave de traducción)
 const NOZZLES = {
   '0.4': { label: 'FDM 0.4', clearance: 0.2 },
   '0.2': { label: 'FDM 0.2', clearance: 0.15 },
-  resin: { label: 'Resina', clearance: 0.1 },
+  resin: { labelKey: 'partsTab.resin', clearance: 0.1 },
 };
 
-const BRIDGES = [
-  { value: 'none', label: 'Sin puentes' },
-  { value: 'vertical', label: 'Verticales' },
-  { value: 'horizontal', label: 'Horizontales' },
-  { value: 'diagonal_45', label: 'Diagonal +45°' },
-  { value: 'diagonal_neg45', label: 'Diagonal −45°' },
-  { value: 'grid', label: 'Cuadrícula' },
-  { value: 'diagonal_cross', label: 'Malla cruzada' },
-];
+const BRIDGES = ['none', 'vertical', 'horizontal', 'diagonal_45', 'diagonal_neg45', 'grid', 'diagonal_cross'];
 
 const TABS = [
-  { id: 'image', label: 'Imagen', icon: <ImageIcon size={16} /> },
-  { id: 'lamp', label: 'Lámpara', icon: <Lamp size={16} /> },
-  { id: 'bridges', label: 'Puentes', icon: <Grid3x3 size={16} /> },
-  { id: 'parts', label: 'Piezas', icon: <Puzzle size={16} /> },
+  { id: 'image', icon: <ImageIcon size={16} /> },
+  { id: 'lamp', icon: <Lamp size={16} /> },
+  { id: 'bridges', icon: <Grid3x3 size={16} /> },
+  { id: 'parts', icon: <Puzzle size={16} /> },
 ];
 
-const PART_LABELS = { shade: 'Pantalla', cap: 'Tapa', base: 'Base', post: 'Poste' };
-const PART_FILES = { base: 'base', cap: 'tapa', post: 'poste' };
+const PIECES = ['shade', 'base', 'cap', 'post'];
 
-function downloadBuffer(buffer, name) {
-  const url = URL.createObjectURL(new Blob([buffer], { type: 'model/stl' }));
+function downloadBlob(blob, name) {
+  const url = URL.createObjectURL(blob);
   const link = document.createElement('a');
   link.href = url;
   link.download = name;
@@ -54,7 +48,10 @@ function downloadBuffer(buffer, name) {
 
 const round1 = (v) => Math.round(v * 10) / 10;
 
+const stlBlob = (buffer) => new Blob([buffer], { type: 'model/stl' });
+
 function App() {
+  const { t, lang, locale } = useI18n();
   const [tab, setTab] = useState('image');
 
   // Bombillo (cm)
@@ -116,6 +113,7 @@ function App() {
 
   // Exportación
   const [exportQuality, setExportQuality] = useState('high');
+  const [exportTarget, setExportTarget] = useState('all'); // 'all' o una pieza
   const [exporting, setExporting] = useState(null); // { progress }
   const [toast, setToast] = useState(null);
 
@@ -217,8 +215,8 @@ function App() {
 
   useEffect(() => {
     if (!toast) return undefined;
-    const t = setTimeout(() => setToast(null), 7000);
-    return () => clearTimeout(t);
+    const timer = setTimeout(() => setToast(null), 7000);
+    return () => clearTimeout(timer);
   }, [toast]);
 
   // Imagen
@@ -233,16 +231,17 @@ function App() {
 
   const handleImageFile = async (file) => {
     if (imageLoading) return;
-    setImageLoading({ progress: 0, stage: 'Leyendo la imagen' });
+    setImageLoading({ progress: 0, stage: 'read' });
     try {
       const data = await loadImageLuminance(file, (progress, stage) => setImageLoading({ progress, stage }));
-      setImageLoading({ progress: 0.85, stage: 'Calculando la lámpara' });
+      setImageLoading({ progress: 0.85, stage: 'lamp' });
       setImageName(file.name.substring(0, file.name.lastIndexOf('.')) || file.name);
       setImageData(data);
       if (lockAspect) setImgScaleY(round1(imgScaleX * (data.height / data.width)));
     } catch (err) {
+      console.error('Error leyendo la imagen:', err);
       setImageLoading(null);
-      setToast({ kind: 'error', text: err.message });
+      setToast({ kind: 'error', text: t('image.readError') });
     }
   };
 
@@ -260,31 +259,64 @@ function App() {
   };
 
   // Exportación
-  const baseName = `lampara_${imageName || 'prueba'}`;
+  const baseName = `${t('files.lamp')}_${imageName || t('files.sample')}`;
+  const exportOptions = partsEnabled ? ['all', ...PIECES] : ['shade'];
+  const target = exportOptions.includes(exportTarget) ? exportTarget : 'shade';
+  const needsShade = target === 'all' || target === 'shade';
+
+  const partFile = (kind) => `${baseName}_${t(`files.${kind}`)}.stl`;
+  const shadeFile = () => `${baseName}_${t('files.shade')}_${exportQuality}.stl`;
+  const mb = (bytes) => (bytes / 1e6).toFixed(1);
 
   const handleExport = async () => {
+    // Base, tapa y poste se generan al instante; la pantalla usa los workers
+    if (!needsShade) {
+      const name = partFile(target);
+      downloadBlob(stlBlob(exportPartStl(engineParams, target)), name);
+      setToast({ kind: 'ok', text: t('export.donePart', { name }) });
+      return;
+    }
     setExporting({ progress: 0 });
+    const t0 = performance.now();
     try {
-      const result = await exportStl(engineParams, imageData, exportQuality, (p) => setExporting({ progress: p }));
-      const name = `${baseName}_pantalla_${exportQuality}.stl`;
-      downloadBuffer(result.buffer, name);
+      const shade = await exportStl(engineParams, imageData, exportQuality, (p) => setExporting({ progress: p }));
+      const coarsened = shade.coarsened ? t('export.coarsened', { cell: shade.cell.toFixed(3) }) : '';
+      if (target === 'shade') {
+        const name = shadeFile();
+        downloadBlob(stlBlob(shade.buffer), name);
+        setToast({
+          kind: 'ok',
+          text: t('export.doneShade', {
+            name,
+            triangles: shade.triangles.toLocaleString(locale),
+            mb: mb(shade.buffer.byteLength),
+            seconds: (shade.ms / 1000).toFixed(1),
+          }) + coarsened,
+        });
+        return;
+      }
+      const files = [
+        { name: shadeFile(), data: shade.buffer },
+        ...PIECES.filter((k) => k !== 'shade').map((k) => ({ name: partFile(k), data: exportPartStl(engineParams, k) })),
+      ];
+      const zip = zipFiles(files);
+      const name = `${baseName}_${exportQuality}.zip`;
+      downloadBlob(zip, name);
       setToast({
         kind: 'ok',
-        text: `${name} · ${result.triangles.toLocaleString('es')} triángulos · ${(result.buffer.byteLength / 1e6).toFixed(1)} MB · ${(result.ms / 1000).toFixed(1)} s`
-          + (result.coarsened ? ` · celda ampliada a ${result.cell.toFixed(3)} mm por el tamaño` : ''),
+        text: t('export.doneAll', {
+          name,
+          count: files.length,
+          mb: mb(zip.size),
+          seconds: ((performance.now() - t0) / 1000).toFixed(1),
+        }) + coarsened,
       });
     } catch (err) {
       console.error('Error generando STL:', err);
-      setToast({ kind: 'error', text: `No se pudo generar el STL: ${err.message}` });
+      setToast({ kind: 'error', text: t('export.error', { message: err.message }) });
     } finally {
       setExporting(null);
     }
-  };
-
-  const handlePartExport = (kind) => {
-    const name = `${baseName}_${PART_FILES[kind]}.stl`;
-    downloadBuffer(exportPartStl(engineParams, kind), name);
-    setToast({ kind: 'ok', text: `${name} descargado` });
   };
 
   const sceneSize = Math.max(height, shapeType === 'cylinder' ? radius : Math.max(boxWidth, boxDepth) / 2);
@@ -296,17 +328,25 @@ function App() {
       <aside className="panel">
         <header className="brand">
           <div className="brand-mark"><Lightbulb size={18} /></div>
-          <div>
-            <h1>Lámpara de Sombras</h1>
-            <p>Pantallas que proyectan tu imagen · STL para imprimir</p>
+          <div className="brand-text">
+            <h1>{t('app.title')}</h1>
+            <p>{t('app.subtitle')}</p>
           </div>
+          {LANGUAGES.length > 1 && (
+            <label className="lang" title={t('app.language')}>
+              <Languages size={14} />
+              <select value={lang} onChange={(e) => setLanguage(e.target.value)} aria-label={t('app.language')}>
+                {LANGUAGES.map((l) => <option key={l.code} value={l.code}>{l.name}</option>)}
+              </select>
+            </label>
+          )}
         </header>
 
         <nav className="tabs" role="tablist">
-          {TABS.map((t) => (
-            <button key={t.id} role="tab" aria-selected={tab === t.id} className={tab === t.id ? 'on' : ''} onClick={() => setTab(t.id)}>
-              {t.icon}
-              <span>{t.label}</span>
+          {TABS.map((item) => (
+            <button key={item.id} role="tab" aria-selected={tab === item.id} className={tab === item.id ? 'on' : ''} onClick={() => setTab(item.id)}>
+              {item.icon}
+              <span>{t(`tabs.${item.id}`)}</span>
             </button>
           ))}
         </nav>
@@ -314,7 +354,7 @@ function App() {
         <div className="panel-scroll">
           {tab === 'image' && (
             <>
-              <Card title="Imagen">
+              <Card title={t('image.title')}>
                 <ImageDrop
                   image={imageData}
                   name={imageName}
@@ -322,51 +362,49 @@ function App() {
                   onFile={handleImageFile}
                   onRemove={handleRemoveImage}
                 />
-                <p className="hint">Usa imágenes en blanco y negro. Con SVG los bordes salen más limpios; lo transparente cuenta como blanco.</p>
+                <p className="hint">{t('image.hint')}</p>
               </Card>
 
-              <Card title="Interpretación">
+              <Card title={t('interpretation.title')}>
                 <Segmented
-                  label="Lo negro de la imagen será"
+                  label={t('interpretation.label')}
                   value={invertShadow ? 'shadow' : 'light'}
                   onChange={(v) => setInvertShadow(v === 'shadow')}
                   options={[
-                    { value: 'light', label: 'Luz', icon: <Sun size={14} /> },
-                    { value: 'shadow', label: 'Sombra', icon: <Moon size={14} /> },
+                    { value: 'light', label: t('interpretation.light'), icon: <Sun size={14} /> },
+                    { value: 'shadow', label: t('interpretation.shadow'), icon: <Moon size={14} /> },
                   ]}
                 />
                 <p className="hint">
-                  {invertShadow
-                    ? 'Las zonas negras quedan en sombra: la lámpara las tapa con material.'
-                    : 'Las zonas negras se iluminan: la lámpara las recorta como huecos.'}
+                  {invertShadow ? t('interpretation.hintShadow') : t('interpretation.hintLight')}
                 </p>
               </Card>
 
               <Card
-                title="Posición en la pared"
+                title={t('position.title')}
                 action={(
                   <IconToggle
                     active={lockAspect}
                     onClick={() => setLockAspect((v) => !v)}
                     icon={lockAspect ? <Lock size={14} /> : <Unlock size={14} />}
-                    title={lockAspect ? 'Proporción bloqueada' : 'Proporción libre'}
+                    title={lockAspect ? t('position.aspectLocked') : t('position.aspectFree')}
                   />
                 )}
               >
-                <Field label="Ancho" unit="cm" value={imgScaleX} min={1} max={150} step={0.5} onChange={setWidthKeepingAspect} />
-                <Field label="Alto" unit="cm" value={imgScaleY} min={1} max={150} step={0.5} onChange={setHeightKeepingAspect} />
-                <Field label="Posición X" unit="cm" value={imgOffsetX} min={-70} max={70} step={0.1} onChange={setImgOffsetX} />
-                <Field label="Posición Y" unit="cm" value={imgOffsetY} min={-70} max={70} step={0.1} onChange={setImgOffsetY} />
-                <Field label="Rotación" unit="°" value={imgRotation} min={-180} max={180} step={1} onChange={setImgRotation} />
+                <Field label={t('position.width')} unit="cm" value={imgScaleX} min={1} max={150} step={0.5} onChange={setWidthKeepingAspect} />
+                <Field label={t('position.height')} unit="cm" value={imgScaleY} min={1} max={150} step={0.5} onChange={setHeightKeepingAspect} />
+                <Field label={t('position.x')} unit="cm" value={imgOffsetX} min={-70} max={70} step={0.1} onChange={setImgOffsetX} />
+                <Field label={t('position.y')} unit="cm" value={imgOffsetY} min={-70} max={70} step={0.1} onChange={setImgOffsetY} />
+                <Field label={t('position.rotation')} unit="°" value={imgRotation} min={-180} max={180} step={1} onChange={setImgRotation} />
                 <Switch
                   checked={dragImage}
                   onChange={setDragImage}
-                  label="Mover con el mouse"
-                  description="Arrastra la imagen sobre la pared en la vista 3D. Fuera de la imagen, la cámara gira como siempre."
+                  label={t('position.drag')}
+                  description={t('position.dragHint')}
                 />
                 <div className="toggle-row">
-                  <IconToggle active={imgFlipX} onClick={() => setImgFlipX((v) => !v)} icon={<FlipHorizontal2 size={14} />} label="Reflejar X" />
-                  <IconToggle active={imgFlipY} onClick={() => setImgFlipY((v) => !v)} icon={<FlipVertical2 size={14} />} label="Reflejar Y" />
+                  <IconToggle active={imgFlipX} onClick={() => setImgFlipX((v) => !v)} icon={<FlipHorizontal2 size={14} />} label={t('position.flipX')} />
+                  <IconToggle active={imgFlipY} onClick={() => setImgFlipY((v) => !v)} icon={<FlipVertical2 size={14} />} label={t('position.flipY')} />
                 </div>
               </Card>
             </>
@@ -374,65 +412,62 @@ function App() {
 
           {tab === 'lamp' && (
             <>
-              <Card title="Forma">
+              <Card title={t('lamp.shape')}>
                 <Segmented
                   value={shapeType}
                   onChange={setShapeType}
                   options={[
-                    { value: 'cylinder', label: 'Cilindro', icon: <Cylinder size={14} /> },
-                    { value: 'box', label: 'Caja', icon: <Box size={14} /> },
+                    { value: 'cylinder', label: t('lamp.cylinder'), icon: <Cylinder size={14} /> },
+                    { value: 'box', label: t('lamp.box'), icon: <Box size={14} /> },
                   ]}
                 />
                 {shapeType === 'cylinder' ? (
-                  <Field label="Radio" unit="cm" value={radius} min={1} max={10} step={0.1} onChange={setRadius} />
+                  <Field label={t('lamp.radius')} unit="cm" value={radius} min={1} max={10} step={0.1} onChange={setRadius} />
                 ) : (
                   <>
                     <div className="grid-2">
-                      <Field label="Ancho" unit="cm" value={boxWidth} min={2} max={30} step={0.5} onChange={setBoxWidth} />
-                      <Field label="Profundidad" unit="cm" value={boxDepth} min={2} max={30} step={0.5} onChange={setBoxDepth} />
+                      <Field label={t('lamp.width')} unit="cm" value={boxWidth} min={2} max={30} step={0.5} onChange={setBoxWidth} />
+                      <Field label={t('lamp.depth')} unit="cm" value={boxDepth} min={2} max={30} step={0.5} onChange={setBoxDepth} />
                     </div>
-                    <Field label="Radio de esquina" unit="cm" value={effCorner} min={0} max={maxCorner} step={0.25} onChange={setBoxCornerRadius} />
+                    <Field label={t('lamp.cornerRadius')} unit="cm" value={effCorner} min={0} max={maxCorner} step={0.25} onChange={setBoxCornerRadius} />
                   </>
                 )}
-                <Field label="Altura" unit="cm" value={height} min={2} max={30} step={0.5} onChange={setHeight} />
+                <Field label={t('lamp.height')} unit="cm" value={height} min={2} max={30} step={0.5} onChange={setHeight} />
                 <div className="grid-2">
-                  <Field label="Grosor de pared" unit="mm" value={effThickness} min={0.8} max={maxThickness} step={0.1} onChange={setThickness} />
-                  <Field label="Aro de los extremos" unit="mm" value={effRim} min={0.5} max={20} step={0.5} onChange={setRim} />
+                  <Field label={t('lamp.thickness')} unit="mm" value={effThickness} min={0.8} max={maxThickness} step={0.1} onChange={setThickness} />
+                  <Field label={t('lamp.rim')} unit="mm" value={effRim} min={0.5} max={20} step={0.5} onChange={setRim} />
                 </div>
                 {partsEnabled && rim < effRim && (
-                  <p className="hint">El aro se amplía para cubrir el labio de la base y la tapa ({lipLength} mm + 1 mm).</p>
+                  <p className="hint">{t('lamp.rimHint', { lip: lipLength })}</p>
                 )}
               </Card>
 
-              <Card title="Bombillo">
-                <Field label="Distancia a la pared" unit="cm" value={effDistance} min={1} max={maxDistance} step={0.1} onChange={setDistance} />
-                <Field label="Radio del bombillo" unit="cm" value={effBulbRadius} min={0.1} max={maxBulbRadius} step={0.1} onChange={setBulbRadius} />
+              <Card title={t('bulb.title')}>
+                <Field label={t('bulb.distance')} unit="cm" value={effDistance} min={1} max={maxDistance} step={0.1} onChange={setDistance} />
+                <Field label={t('bulb.radius')} unit="cm" value={effBulbRadius} min={0.1} max={maxBulbRadius} step={0.1} onChange={setBulbRadius} />
                 <div className="note">
                   <Info size={14} />
-                  <span>
-                    El bombillo queda {bulbDepth.toFixed(1)} cm dentro de la pantalla. Los huecos se orientan hacia él para
-                    que el grosor no recorte la sombra. Un LED pequeño da bordes más nítidos.
-                  </span>
+                  <span>{t('bulb.note', { depth: bulbDepth.toFixed(1) })}</span>
                 </div>
               </Card>
             </>
           )}
 
           {tab === 'bridges' && (
-            <Card title="Puentes">
-              <p className="hint">Los puentes sujetan las partes que quedarían sueltas (como el centro de una “O”).</p>
+            <Card title={t('bridges.title')}>
+              <p className="hint">{t('bridges.hint')}</p>
               <div className="chip-grid">
                 {BRIDGES.map((b) => (
-                  <button key={b.value} type="button" className={`chip${supportType === b.value ? ' on' : ''}`} onClick={() => setSupportType(b.value)}>
-                    {supportType === b.value && <Check size={13} />}
-                    {b.label}
+                  <button key={b} type="button" className={`chip${supportType === b ? ' on' : ''}`} onClick={() => setSupportType(b)}>
+                    {supportType === b && <Check size={13} />}
+                    {t(`bridges.types.${b}`)}
                   </button>
                 ))}
               </div>
               {supportType !== 'none' && (
                 <div className="grid-2">
-                  <Field label="Grosor" unit="mm" value={supportThickness} min={0.4} max={3} step={0.1} onChange={setSupportThickness} />
-                  <Field label="Separación" unit="mm" value={supportSpacing} min={3} max={60} step={1} onChange={setSupportSpacing} />
+                  <Field label={t('bridges.thickness')} unit="mm" value={supportThickness} min={0.4} max={3} step={0.1} onChange={setSupportThickness} />
+                  <Field label={t('bridges.spacing')} unit="mm" value={supportSpacing} min={3} max={60} step={1} onChange={setSupportSpacing} />
                 </div>
               )}
             </Card>
@@ -440,32 +475,32 @@ function App() {
 
           {tab === 'parts' && (
             <>
-              <Card title="Piezas encastrables">
+              <Card title={t('partsTab.title')}>
                 <Switch
                   checked={partsEnabled}
                   onChange={setPartsEnabled}
-                  label="Generar base, tapa y poste"
-                  description="La base va contra la pared y sostiene el poste hueco del bombillo (por dentro pasa el cable). La tapa cierra el lado de la habitación."
+                  label={t('partsTab.toggle')}
+                  description={t('partsTab.toggleHint')}
                 />
               </Card>
               {partsEnabled && (
                 <>
-                  <Card title="Ajuste de impresión">
+                  <Card title={t('partsTab.fitTitle')}>
                     <Segmented
-                      label="Tipo de impresión"
+                      label={t('partsTab.printType')}
                       value={nozzle}
                       onChange={(v) => { setNozzle(v); setClearance(NOZZLES[v].clearance); }}
-                      options={Object.entries(NOZZLES).map(([value, n]) => ({ value, label: n.label }))}
+                      options={Object.entries(NOZZLES).map(([value, n]) => ({ value, label: n.labelKey ? t(n.labelKey) : n.label }))}
                     />
-                    <Field label="Holgura del encastre" unit="mm" value={clearance} min={0} max={0.6} step={0.05} onChange={setClearance}
-                      hint="Espacio entre el labio y la pantalla. Más holgura = encaja más suelto." />
+                    <Field label={t('partsTab.clearance')} unit="mm" value={clearance} min={0} max={0.6} step={0.05} onChange={setClearance}
+                      hint={t('partsTab.clearanceHint')} />
                   </Card>
-                  <Card title="Medidas">
-                    <Field label="Grosor de la base" unit="mm" value={baseThickness} min={1.5} max={10} step={0.5} onChange={setBaseThickness} />
-                    <Field label="Grosor de la tapa" unit="mm" value={capThickness} min={1} max={10} step={0.5} onChange={setCapThickness} />
-                    <Field label="Largo del labio" unit="mm" value={lipLength} min={2} max={15} step={0.5} onChange={setLipLength} />
-                    <Field label="Diámetro del poste" unit="mm" value={effPostDiameter} min={4} max={maxPostDiameter} step={0.5} onChange={setPostDiameter} />
-                    <Field label="Paso de cable" unit="mm" value={effCableDiameter} min={1} max={Math.max(1, effPostDiameter - 1.6)} step={0.5} onChange={setCableDiameter} />
+                  <Card title={t('partsTab.sizes')}>
+                    <Field label={t('partsTab.baseThickness')} unit="mm" value={baseThickness} min={1.5} max={10} step={0.5} onChange={setBaseThickness} />
+                    <Field label={t('partsTab.capThickness')} unit="mm" value={capThickness} min={1} max={10} step={0.5} onChange={setCapThickness} />
+                    <Field label={t('partsTab.lipLength')} unit="mm" value={lipLength} min={2} max={15} step={0.5} onChange={setLipLength} />
+                    <Field label={t('partsTab.postDiameter')} unit="mm" value={effPostDiameter} min={4} max={maxPostDiameter} step={0.5} onChange={setPostDiameter} />
+                    <Field label={t('partsTab.cable')} unit="mm" value={effCableDiameter} min={1} max={Math.max(1, effPostDiameter - 1.6)} step={0.5} onChange={setCableDiameter} />
                   </Card>
                 </>
               )}
@@ -476,24 +511,35 @@ function App() {
         {/* Exportación siempre visible */}
         <footer className="export">
           <div className="export-row">
-            <select className="select select-compact" value={exportQuality} onChange={(e) => setExportQuality(e.target.value)} title="Calidad del STL">
-              {['low', 'medium', 'high', 'ultra'].map((k) => (
-                <option key={k} value={k}>{QUALITY[k].label} · {QUALITY[k].cell} mm</option>
+            <select
+              className="select export-target"
+              value={target}
+              onChange={(e) => setExportTarget(e.target.value)}
+              title={t('export.target')}
+              aria-label={t('export.target')}
+              disabled={exportOptions.length < 2}
+            >
+              {exportOptions.map((k) => (
+                <option key={k} value={k}>{k === 'all' ? t('export.all') : t(`parts.${k}`)}</option>
               ))}
             </select>
-            <button className="btn btn-primary" onClick={handleExport} disabled={!!exporting}>
-              <Download size={16} /> Exportar pantalla
-            </button>
-          </div>
-          {partsEnabled && (
-            <div className="export-parts">
-              {['base', 'cap', 'post'].map((k) => (
-                <button key={k} className="btn btn-secondary" onClick={() => handlePartExport(k)}>
-                  <Download size={14} /> {PART_LABELS[k]}
-                </button>
+            <select
+              className="select select-compact"
+              value={exportQuality}
+              onChange={(e) => setExportQuality(e.target.value)}
+              title={needsShade ? t('export.quality') : t('export.qualityParts')}
+              aria-label={t('export.quality')}
+              disabled={!needsShade}
+            >
+              {['low', 'medium', 'high', 'ultra'].map((k) => (
+                <option key={k} value={k}>{t(`quality.${k}`)} · {QUALITY[k].cell} mm</option>
               ))}
-            </div>
-          )}
+            </select>
+          </div>
+          <button className="btn btn-primary" onClick={handleExport} disabled={!!exporting}>
+            <Download size={16} />
+            {target === 'all' ? t('export.buttonAll') : t('export.buttonOne', { part: t(`parts.${target}`).toLowerCase() })}
+          </button>
         </footer>
       </aside>
 
@@ -507,36 +553,36 @@ function App() {
                 active={visibleParts[k]}
                 onClick={() => setVisibleParts((v) => ({ ...v, [k]: !v[k] }))}
                 icon={visibleParts[k] ? <Eye size={14} /> : <EyeOff size={14} />}
-                label={PART_LABELS[k]}
-                title={`${visibleParts[k] ? 'Ocultar' : 'Mostrar'} ${PART_LABELS[k].toLowerCase()}`}
+                label={t(`parts.${k}`)}
+                title={t(visibleParts[k] ? 'viewer.hide' : 'viewer.show', { part: t(`parts.${k}`).toLowerCase() })}
               />
             ))}
           </div>
           <div className="tool-group">
-            <IconToggle active={showWall} onClick={() => setShowWall((v) => !v)} icon={<Sun size={14} />} label="Luz en la pared" />
+            <IconToggle active={showWall} onClick={() => setShowWall((v) => !v)} icon={<Sun size={14} />} label={t('viewer.wallLight')} />
             <IconToggle
               active={dragImage}
               onClick={() => setDragImage((v) => !v)}
               icon={<Move size={14} />}
-              label="Mover imagen"
-              title="Arrastrar la imagen sobre la pared con el mouse"
+              label={t('viewer.moveImage')}
+              title={t('viewer.moveImageTitle')}
             />
             {partsEnabled && (
               <IconToggle
                 active={exploded}
                 onClick={() => setExploded((v) => !v)}
                 icon={exploded ? <Shrink size={14} /> : <Expand size={14} />}
-                label={exploded ? 'Ensamblar' : 'Separar'}
+                label={exploded ? t('viewer.assemble') : t('viewer.explode')}
               />
             )}
           </div>
           <div className="tool-spacer" />
           <div className="tool-group">
-            <span className="tool-label">Pared</span>
-            <IconToggle active={wallTone === 'dark'} onClick={() => setWallTone('dark')} icon={<Moon size={14} />} title="Pared oscura" />
-            <IconToggle active={wallTone === 'light'} onClick={() => setWallTone('light')} icon={<Sun size={14} />} title="Pared clara" />
+            <span className="tool-label">{t('viewer.wall')}</span>
+            <IconToggle active={wallTone === 'dark'} onClick={() => setWallTone('dark')} icon={<Moon size={14} />} title={t('viewer.wallDark')} />
+            <IconToggle active={wallTone === 'light'} onClick={() => setWallTone('light')} icon={<Sun size={14} />} title={t('viewer.wallBright')} />
             <span className="tool-divider" />
-            <span className="tool-label">Luz</span>
+            <span className="tool-label">{t('viewer.light')}</span>
             {Object.entries(LIGHT_COLORS).map(([k, c]) => (
               <button
                 key={k}
@@ -544,26 +590,30 @@ function App() {
                 className={`swatch${lightColor === k ? ' on' : ''}`}
                 style={{ '--swatch': `rgb(${c.rgb.join(',')})` }}
                 onClick={() => setLightColor(k)}
-                title={`Luz ${c.label.toLowerCase()}`}
-                aria-label={`Luz ${c.label.toLowerCase()}`}
+                title={t('viewer.lightColor', { color: t(`lights.${k}`).toLowerCase() })}
+                aria-label={t('viewer.lightColor', { color: t(`lights.${k}`).toLowerCase() })}
               />
             ))}
           </div>
           <div className="tool-group">
-            <IconToggle onClick={() => setCameraKey((k) => k + 1)} icon={<Focus size={14} />} title="Centrar vista" />
+            <IconToggle onClick={() => setCameraKey((k) => k + 1)} icon={<Focus size={14} />} title={t('viewer.center')} />
           </div>
         </div>
 
         <div className="status">
           {computing ? <LoaderCircle size={13} className="spin" /> : <span className="status-dot" />}
           {previewError ? (
-            <span className="status-error">Error: {previewError}</span>
+            <span className="status-error">{t('viewer.error', { message: previewError })}</span>
           ) : preview ? (
             <span>
-              Vista previa · {preview.stats.triangles.toLocaleString('es')} triángulos · celda {preview.stats.cell.toFixed(2)} mm · {preview.stats.ms.toFixed(0)} ms
+              {t('viewer.preview', {
+                triangles: preview.stats.triangles.toLocaleString(locale),
+                cell: preview.stats.cell.toFixed(2),
+                ms: preview.stats.ms.toFixed(0),
+              })}
             </span>
           ) : (
-            <span>Calculando…</span>
+            <span>{t('viewer.computing')}</span>
           )}
         </div>
 
@@ -598,7 +648,7 @@ function App() {
           <div className={`toast ${toast.kind}`} role="status">
             {toast.kind === 'ok' ? <Check size={16} /> : <TriangleAlert size={16} />}
             <span>{toast.text}</span>
-            <button type="button" onClick={() => setToast(null)} aria-label="Cerrar"><X size={14} /></button>
+            <button type="button" onClick={() => setToast(null)} aria-label={t('viewer.close')}><X size={14} /></button>
           </div>
         )}
       </main>
@@ -607,8 +657,8 @@ function App() {
         <div className="modal-backdrop">
           <div className="modal" role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(imageLoading.progress * 100)}>
             <LoaderCircle size={28} className="spin accent" />
-            <h2>Cargando la imagen</h2>
-            <p>{imageLoading.stage}…</p>
+            <h2>{t('loading.title')}</h2>
+            <p>{t(`loading.${imageLoading.stage}`)}…</p>
             <div className="progress"><div style={{ width: `${Math.round(imageLoading.progress * 100)}%` }} /></div>
             <span className="progress-label">{Math.round(imageLoading.progress * 100)} %</span>
           </div>
@@ -619,8 +669,8 @@ function App() {
         <div className="modal-backdrop">
           <div className="modal">
             <LoaderCircle size={28} className="spin accent" />
-            <h2>Generando la pantalla</h2>
-            <p>Calidad {QUALITY[exportQuality].label.toLowerCase()} · usando varios núcleos del procesador</p>
+            <h2>{target === 'all' ? t('export.generatingAll') : t('export.generatingShade')}</h2>
+            <p>{t('export.modalText', { quality: t(`quality.${exportQuality}`).toLowerCase() })}</p>
             <div className="progress"><div style={{ width: `${Math.round(exporting.progress * 100)}%` }} /></div>
             <span className="progress-label">{Math.round(exporting.progress * 100)} %</span>
           </div>
