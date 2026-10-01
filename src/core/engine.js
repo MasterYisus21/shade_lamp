@@ -3,6 +3,7 @@
 import { planGrid, computeField } from './field.js';
 import { meshStrips } from './mesher.js';
 import { makeAngleToArc } from './profile.js';
+import { wallGap, partsLayout } from './parts.js';
 
 // cell: tamaño de celda de muestreo (mm); chordTol: error máx. de cuerda en curvas;
 // simplifyTol: desviación máx. al simplificar contornos (mm).
@@ -60,6 +61,10 @@ export function wallLightMap(params, grid, field, size, half) {
   const { rows, zMin, dz, colS, nCols } = grid;
   const D = params.distance;
   const N = nCols - 1;
+  // El poste (si existe) tapa los rayos que salen hacia la pared casi en el eje
+  const postK = params.parts && params.parts.enabled
+    ? partsLayout(params).p.postOuterRadius / Math.max(params.bulbRadius || 0, 1e-3)
+    : 0;
 
   const colAt = (s) => {
     let lo = 0;
@@ -80,6 +85,7 @@ export function wallLightMap(params, grid, field, size, half) {
       if (rho < 1e-9) continue;
       const ro = profile.polarRadius(X, Y);
       if (rho <= ro) continue; // detrás de la base de la lámpara
+      if (rho / D < postK) continue; // sombra del poste
       const Z = (D * ro) / rho;
       const fr = (Z - zMin) / dz;
       if (fr < 0 || fr > rows - 1) continue;
@@ -107,12 +113,12 @@ export function wallHalfExtent(params) {
 }
 
 /**
- * Lleva la malla al marco de impresión: extremo de la pared en Z = 0 y la
- * pantalla hacia +Z (rotación de 180° sobre X, conserva la orientación).
+ * Lleva la malla al marco de impresión: extremo del lado de la pared en Z = 0 y
+ * la pantalla hacia +Z (rotación de 180° sobre X, conserva la orientación).
  */
 export function toPrintFrame(tris, params) {
   const out = new Float32Array(tris.length);
-  const D = params.distance;
+  const D = params.distance - wallGap(params);
   for (let i = 0; i < tris.length; i += 3) {
     out[i] = tris[i];
     out[i + 1] = -tris[i + 1];

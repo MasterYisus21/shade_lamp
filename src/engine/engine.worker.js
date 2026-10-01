@@ -9,6 +9,7 @@ import {
   wallLightMap,
   wallHalfExtent,
 } from '../core/engine.js';
+import { buildAllParts, partToWorld } from '../core/parts.js';
 
 const PREVIEW_MAX_SAMPLES = 400_000;
 const WALL_SIZE = 512;
@@ -33,8 +34,16 @@ self.onmessage = (e) => {
       }
       const transfer = [tris.buffer];
       if (wall) transfer.push(wall.mask.buffer);
+      let parts = null;
+      if (msg.params.parts && msg.params.parts.enabled) {
+        parts = {};
+        for (const [kind, local] of Object.entries(buildAllParts(msg.params))) {
+          parts[kind] = partToWorld(local, kind, msg.params);
+          transfer.push(parts[kind].buffer);
+        }
+      }
       self.postMessage(
-        { type: 'preview', id: msg.id, tris, wall, stats: { cell: q.cell, triangles: tris.length / 9, ms: performance.now() - t0 } },
+        { type: 'preview', id: msg.id, tris, wall, parts, stats: { cell: q.cell, triangles: tris.length / 9, ms: performance.now() - t0 } },
         transfer,
       );
       return;

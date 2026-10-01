@@ -1,10 +1,29 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { Upload, Lightbulb, Download, Loader2, Eye, EyeOff } from 'lucide-react';
 import Scene from './Scene';
-import { createPreviewEngine, exportStl } from './engine/client';
+import { createPreviewEngine, exportStl, exportPartStl } from './engine/client';
 import { loadImageLuminance, defaultImage } from './engine/image';
 import { QUALITY } from './core/engine';
+import { DEFAULT_PARTS } from './core/parts';
 import './index.css';
+
+// Holgura del encastre según el tipo de impresión (mm)
+const NOZZLES = {
+  '0.4': { label: 'FDM · boquilla 0.4 mm', clearance: 0.2 },
+  '0.2': { label: 'FDM · boquilla 0.2 mm', clearance: 0.15 },
+  resin: { label: 'Resina', clearance: 0.1 },
+};
+
+function downloadBuffer(buffer, name) {
+  const url = URL.createObjectURL(new Blob([buffer], { type: 'model/stl' }));
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = name;
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  setTimeout(() => URL.revokeObjectURL(url), 10_000);
+}
 
 function Slider({ label, unit, value, min, max, step, onChange, digits }) {
   const shown = digits !== undefined ? Number(value).toFixed(digits) : value;
@@ -69,8 +88,19 @@ function App() {
   const [supportThickness, setSupportThickness] = useState(0.8);
   const [supportSpacing, setSupportSpacing] = useState(20);
 
+  // Impresora y piezas (mm)
+  const [nozzle, setNozzle] = useState('0.4');
+  const [partsEnabled, setPartsEnabled] = useState(true);
+  const [baseThickness, setBaseThickness] = useState(DEFAULT_PARTS.baseThickness);
+  const [capThickness, setCapThickness] = useState(DEFAULT_PARTS.capThickness);
+  const [lipLength, setLipLength] = useState(DEFAULT_PARTS.lipLength);
+  const [clearance, setClearance] = useState(NOZZLES['0.4'].clearance);
+  const [postDiameter, setPostDiameter] = useState(DEFAULT_PARTS.postOuterRadius * 2);
+  const [cableDiameter, setCableDiameter] = useState(DEFAULT_PARTS.cableRadius * 2);
+
   // Vista previa y exportación
   const [showWall, setShowWall] = useState(true);
+  const [exploded, setExploded] = useState(false);
   const [preview, setPreview] = useState(null);
   const [previewError, setPreviewError] = useState(null);
   const [exportQuality, setExportQuality] = useState('high');
@@ -80,12 +110,18 @@ function App() {
   const innerHalf = shapeType === 'cylinder' ? radius : Math.min(boxWidth, boxDepth) / 2;
   const maxBulbRadius = Math.max(0.1, innerHalf - thickness / 10);
   const effBulbRadius = Math.min(bulbRadius, maxBulbRadius);
-  const maxDistance = Math.max(1, height - 0.5); // el bombillo va dentro de la pantalla
+  const gapCm = partsEnabled ? baseThickness / 10 : 0; // la base separa la pantalla de la pared
+  const maxDistance = Math.max(1, height - 0.5 + gapCm); // el bombillo va dentro de la pantalla
   const effDistance = Math.min(distance, maxDistance);
   const maxCorner = Math.min(boxWidth, boxDepth) / 2;
   const effCorner = Math.min(boxCornerRadius, maxCorner);
   const maxThickness = Math.min(10, innerHalf * 10 * 0.5);
   const effThickness = Math.min(thickness, maxThickness);
+  // El labio de la base y la tapa entra en la pantalla: esa zona debe ser sólida
+  const effRim = partsEnabled ? Math.max(rim, lipLength + 1) : rim;
+  const maxPostDiameter = Math.max(4, Math.floor((innerHalf * 10 - effThickness) * 2 * 0.5));
+  const effPostDiameter = Math.min(postDiameter, maxPostDiameter);
+  const effCableDiameter = Math.min(cableDiameter, effPostDiameter - 1.6);
 
   // Parámetros del motor, todo en mm
   const engineParams = useMemo(() => ({
@@ -95,8 +131,19 @@ function App() {
     thickness: effThickness,
     height: height * 10,
     distance: effDistance * 10,
-    rimWall: rim,
-    rimRoom: rim,
+    bulbRadius: effBulbRadius * 10,
+    rimWall: effRim,
+    rimRoom: effRim,
+    parts: {
+      ...DEFAULT_PARTS,
+      enabled: partsEnabled,
+      baseThickness,
+      capThickness,
+      lipLength,
+      clearance,
+      postOuterRadius: effPostDiameter / 2,
+      cableRadius: effCableDiameter / 2,
+    },
     image: {
       offsetX: imgOffsetX * 10,
       offsetY: imgOffsetY * 10,
@@ -108,9 +155,10 @@ function App() {
       invert: invertShadow,
     },
     bridges: { type: supportType, width: supportThickness, spacing: supportSpacing },
-  }), [shapeType, radius, boxWidth, boxDepth, effCorner, effThickness, height, effDistance, rim,
+  }), [shapeType, radius, boxWidth, boxDepth, effCorner, effThickness, height, effDistance, effBulbRadius, effRim,
     imgOffsetX, imgOffsetY, imgScaleX, imgScaleY, imgRotation, imgFlipX, imgFlipY, invertShadow,
-    supportType, supportThickness, supportSpacing]);
+    supportType, supportThickness, supportSpacing,
+    partsEnabled, baseThickness, capThickness, lipLength, clearance, effPostDiameter, effCableDiameter]);
 
   // Motor de vista previa (worker)
   const engineRef = useRef(null);
@@ -161,15 +209,8 @@ function App() {
       const result = await exportStl(engineParams, imageData, exportQuality, (p) =>
         setExportState((s) => ({ ...s, progress: p })),
       );
-      const name = `lamp_${imageName}_${effDistance}cm_${exportQuality}.stl`;
-      const url = URL.createObjectURL(new Blob([result.buffer], { type: 'model/stl' }));
-      const link = document.createElement('a');
-      link.href = url;
-      link.download = name;
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
-      setTimeout(() => URL.revokeObjectURL(url), 10_000);
+      const name = `lamp_${imageName}_pantalla_${exportQuality}.stl`;
+      downloadBuffer(result.buffer, name);
       setExportState({ running: false, progress: 1, result: { ...result, name }, error: null });
     } catch (err) {
       console.error('Error generando STL:', err);
@@ -177,7 +218,12 @@ function App() {
     }
   };
 
-  const sceneSize = Math.max(height, shapeType === 'cylinder' ? radius : Math.max(boxWidth, boxDepth) / 2);
+  const PART_NAMES = { base: 'base', cap: 'tapa', post: 'poste' };
+  const handlePartExport = (kind) => {
+    downloadBuffer(exportPartStl(engineParams, kind), `lamp_${imageName}_${PART_NAMES[kind]}.stl`);
+  };
+
+  const sceneSize =Math.max(height, shapeType === 'cylinder' ? radius : Math.max(boxWidth, boxDepth) / 2);
 
   return (
     <div className="app-container">
@@ -235,7 +281,39 @@ function App() {
           )}
           <Slider label="Altura (desde la pared)" unit="cm" value={height} min={2} max={30} step={0.5} onChange={setHeight} />
           <Slider label="Grosor de la pared" unit="mm" value={effThickness} min={0.8} max={maxThickness} step={0.1} digits={1} onChange={setThickness} />
-          <Slider label="Aro sólido en los extremos" unit="mm" value={rim} min={0.5} max={10} step={0.5} onChange={setRim} />
+          <Slider label="Aro sólido en los extremos" unit="mm" value={effRim} min={0.5} max={20} step={0.5} onChange={setRim} />
+          {partsEnabled && rim < effRim && (
+            <small className="hint">El aro se amplía para cubrir el labio de la base y la tapa ({lipLength} mm + 1).</small>
+          )}
+        </Section>
+
+        <Section title="Base, tapa y poste">
+          <div className="checks">
+            <label>
+              <input type="checkbox" checked={partsEnabled} onChange={(e) => setPartsEnabled(e.target.checked)} />
+              Generar base, tapa y poste encastrables
+            </label>
+          </div>
+          {partsEnabled && (
+            <>
+              <small className="hint">
+                La base va contra la pared y sostiene el poste hueco del bombillo (pasa el cable). La tapa cierra el lado
+                de la habitación. Ambas encajan dentro de la pantalla con un labio.
+              </small>
+              <div className="control-group">
+                <label>Tipo de impresión</label>
+                <select value={nozzle} onChange={(e) => { setNozzle(e.target.value); setClearance(NOZZLES[e.target.value].clearance); }}>
+                  {Object.entries(NOZZLES).map(([k, n]) => <option key={k} value={k}>{n.label}</option>)}
+                </select>
+              </div>
+              <Slider label="Holgura del encastre" unit="mm" value={clearance} min={0} max={0.6} step={0.05} digits={2} onChange={setClearance} />
+              <Slider label="Grosor de la base" unit="mm" value={baseThickness} min={1.5} max={10} step={0.5} onChange={setBaseThickness} />
+              <Slider label="Grosor de la tapa" unit="mm" value={capThickness} min={1} max={10} step={0.5} onChange={setCapThickness} />
+              <Slider label="Largo del labio" unit="mm" value={lipLength} min={2} max={15} step={0.5} onChange={setLipLength} />
+              <Slider label="Diámetro del poste" unit="mm" value={effPostDiameter} min={4} max={maxPostDiameter} step={0.5} onChange={setPostDiameter} />
+              <Slider label="Diámetro del paso de cable" unit="mm" value={effCableDiameter} min={1} max={Math.max(1, effPostDiameter - 1.6)} step={0.5} onChange={setCableDiameter} />
+            </>
+          )}
         </Section>
 
         <Section title="Imagen proyectada">
@@ -300,8 +378,15 @@ function App() {
             </select>
           </div>
           <button className="btn btn-export" onClick={handleExport} disabled={exportState.running}>
-            <Download size={18} /> Descargar STL
+            <Download size={18} /> Descargar pantalla (STL)
           </button>
+          {partsEnabled && (
+            <div className="button-row">
+              <button className="btn btn-small btn-export" onClick={() => handlePartExport('base')}><Download size={14} /> Base</button>
+              <button className="btn btn-small btn-export" onClick={() => handlePartExport('cap')}><Download size={14} /> Tapa</button>
+              <button className="btn btn-small btn-export" onClick={() => handlePartExport('post')}><Download size={14} /> Poste</button>
+            </div>
+          )}
           {exportState.result && (
             <small className="hint">
               {exportState.result.name}: {exportState.result.triangles.toLocaleString('es')} triángulos,{' '}
@@ -317,9 +402,10 @@ function App() {
             <Lightbulb size={16} color="var(--accent)" />
             <strong>Cómo funciona</strong>
           </div>
-          El bombillo está en el origen y la pared a {effDistance} cm. La pantalla sale de la pared {height} cm,
-          así que el bombillo queda {(height - effDistance).toFixed(1)} cm dentro de ella. Los huecos se orientan hacia
-          el bombillo para que el grosor no recorte la sombra.
+          El bombillo está en el origen y la pared a {effDistance} cm.
+          {partsEnabled ? ` La base mide ${baseThickness} mm y sobre ella va la pantalla de ${height} cm,` : ` La pantalla sale de la pared ${height} cm,`}
+          {' '}así que el bombillo queda {(height + gapCm - effDistance).toFixed(1)} cm dentro de ella. Los huecos se
+          orientan hacia el bombillo para que el grosor no recorte la sombra.
         </div>
       </div>
 
@@ -329,6 +415,11 @@ function App() {
             {showWall ? <EyeOff size={14} /> : <Eye size={14} />}
             {showWall ? 'Ocultar luz proyectada' : 'Mostrar luz proyectada'}
           </button>
+          {partsEnabled && (
+            <button className="btn btn-small btn-ghost" onClick={() => setExploded((v) => !v)}>
+              {exploded ? 'Vista ensamblada' : 'Vista separada'}
+            </button>
+          )}
           {preview && (
             <span className="badge">
               Vista previa: {preview.stats.triangles.toLocaleString('es')} triángulos · celda {preview.stats.cell.toFixed(2)} mm · {preview.stats.ms.toFixed(0)} ms
@@ -338,6 +429,7 @@ function App() {
         </div>
         <Scene
           lampTris={preview?.tris}
+          parts={preview?.parts}
           wall={preview?.wall}
           showWall={showWall}
           image={imageData}
@@ -349,6 +441,8 @@ function App() {
           imgFlipX={imgFlipX}
           imgFlipY={imgFlipY}
           distance={effDistance}
+          gap={gapCm}
+          exploded={partsEnabled && exploded}
           height={height}
           bulbRadius={effBulbRadius}
           sceneSize={sceneSize}

@@ -12,7 +12,9 @@ const LIGHT_COLORS = {
   blue: [0, 200, 255],
 };
 
-function useLampGeometry(tris) {
+const PART_COLORS = { base: '#8b5cf6', cap: '#a78bfa', post: '#94a3b8' };
+
+function useTrisGeometry(tris) {
   const geometry = useMemo(() => {
     if (!tris || tris.length === 0) return null;
     const g = new THREE.BufferGeometry();
@@ -84,18 +86,25 @@ function useImageTexture(image) {
 
 export default function Scene({
   lampTris,
+  parts,
   wall,
   showWall,
   image,
   imgOffsetX, imgOffsetY, imgScaleX, imgScaleY, imgRotation, imgFlipX, imgFlipY,
-  distance, height, bulbRadius, sceneSize,
+  distance, gap = 0, height, bulbRadius, sceneSize, exploded,
   bgColor, lightFillColor,
 }) {
-  const lampGeo = useLampGeometry(lampTris);
+  const lampGeo = useTrisGeometry(lampTris);
+  const baseGeo = useTrisGeometry(parts?.base);
+  const capGeo = useTrisGeometry(parts?.cap);
+  const postGeo = useTrisGeometry(parts?.post);
   const wallTex = useWallTexture(wall, lightFillColor);
   const imageTex = useImageTexture(image);
   const wallHalfCm = wall ? wall.half / 10 : 0;
   const showShadow = showWall && wallTex;
+  // Vista separada: la pantalla y la tapa se alejan de la base hacia la habitación
+  const ex = exploded ? Math.max(4, height * 0.6) : 0;
+  const PART_OFFSET = { base: 0, post: 0, cap: -2 * ex };
 
   return (
     <Canvas camera={{ position: [15, 10, -15], fov: 45 }}>
@@ -117,10 +126,17 @@ export default function Scene({
 
       {/* Pantalla: la misma malla que se exporta (en calidad borrador) */}
       {lampGeo && (
-        <mesh geometry={lampGeo} scale={0.1}>
+        <mesh geometry={lampGeo} scale={0.1} position={[0, 0, -ex]}>
           <meshStandardMaterial color="#c9bfdc" roughness={0.6} metalness={0.05} />
         </mesh>
       )}
+
+      {/* Base, tapa y poste (mismas mallas que se exportan) */}
+      {[['base', baseGeo], ['cap', capGeo], ['post', postGeo]].map(([kind, geo]) => geo && (
+        <mesh key={kind} geometry={geo} scale={0.1} position={[0, 0, PART_OFFSET[kind]]}>
+          <meshStandardMaterial color={PART_COLORS[kind]} roughness={0.6} metalness={0.05} />
+        </mesh>
+      ))}
 
       {/* Pared */}
       <mesh position={[0, 0, distance + 0.05]}>
@@ -152,7 +168,7 @@ export default function Scene({
 
       <Line points={[[0, 0, 0], [0, 0, distance]]} color="rgba(255,255,255,0.2)" lineWidth={1} dashed />
       <Line
-        points={[[0, 0, distance - height], [0, 0, distance]]}
+        points={[[0, 0, distance - gap - height], [0, 0, distance - gap]]}
         color="rgba(192,132,252,0.35)"
         lineWidth={1}
         dashed

@@ -1,6 +1,14 @@
 // Lado del hilo principal: vista previa en vivo y exportación en paralelo.
 
 import { planForQuality, resolveQuality, writeBinaryStl } from '../core/engine.js';
+import { buildBase, buildCap, buildPost } from '../core/parts.js';
+
+const PART_BUILDERS = { base: buildBase, cap: buildCap, post: buildPost };
+
+/** STL de una pieza complementaria (ya en su orientación de impresión). */
+export function exportPartStl(params, kind) {
+  return writeBinaryStl(PART_BUILDERS[kind](params), `shade_lamp ${kind}`);
+}
 
 const newWorker = () => new Worker(new URL('./engine.worker.js', import.meta.url), { type: 'module' });
 

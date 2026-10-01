@@ -1,14 +1,15 @@
 // Malla de muestreo sobre la superficie de la pantalla y campo "sólido/hueco".
 //
 // Coordenadas del mundo (mm): bombillo en el origen, pared en Z = distance.
-// La pantalla ocupa Z ∈ [distance - height, distance]; el extremo Z = distance
-// toca la pared. La superficie se desenrolla en 2D como (s, Z), donde s es la
+// La pantalla ocupa Z ∈ [zMax - height, zMax], con zMax = distance - grosor de
+// la base (o distance si no hay base, y entonces toca la pared). La superficie se desenrolla en 2D como (s, Z), donde s es la
 // longitud de arco sobre el perfil.
 //
 // El campo g(s, Z) ∈ [0, 1] vale > 0.5 donde hay material. Las rampas son de
 // una celda de ancho para que marching squares ubique los bordes con precisión.
 
 import { makeProfile } from './profile.js';
+import { wallGap } from './parts.js';
 
 export function planGrid(params, { cell, chordTol = 0.01, maxStripLen = 40 }) {
   const profile = makeProfile(params.shape);
@@ -54,8 +55,9 @@ export function planGrid(params, { cell, chordTol = 0.01, maxStripLen = 40 }) {
   colX[N] = colX[0];
   colY[N] = colY[0];
 
-  const zMax = params.distance;
-  const zMin = params.distance - params.height;
+  // Si hay base, la pantalla empieza a su grosor de la pared
+  const zMax = params.distance - wallGap(params);
+  const zMin = zMax - params.height;
   const rows = Math.max(2, Math.ceil(params.height / cell) + 1);
   const dz = params.height / (rows - 1);
 

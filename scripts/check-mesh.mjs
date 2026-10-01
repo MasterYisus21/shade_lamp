@@ -4,6 +4,8 @@
 
 import { buildFull, QUALITY, resolveQuality, writeBinaryStl, toPrintFrame, wallLightMap, buildChunk } from '../src/core/engine.js';
 import { planGrid } from '../src/core/field.js';
+import { buildAllParts, partsLayout, DEFAULT_PARTS } from '../src/core/parts.js';
+import { makeProfile, offsetShape } from '../src/core/profile.js';
 
 const quality = process.argv[2] || 'medium';
 
@@ -128,6 +130,42 @@ for (const [name, params, kind] of cases) {
     console.log(`    STL binario: ${(stl.byteLength / 1e6).toFixed(2)} MB`);
   }
 }
+// Piezas complementarias (base, tapa, poste)
+const partShapes = [
+  ['cilindro', { type: 'cylinder', radius: 30 }],
+  ['caja redondeada', { type: 'box', width: 150, depth: 100, cornerRadius: 20 }],
+  ['caja esquinas vivas', { type: 'box', width: 80, depth: 60, cornerRadius: 0 }],
+  ['cilindro diminuto', { type: 'cylinder', radius: 8 }],
+];
+for (const [name, shape] of partShapes) {
+  const params = baseParams({ shape, bulbRadius: 10, parts: { ...DEFAULT_PARTS }, rimWall: 6, rimRoom: 6 });
+  const parts = buildAllParts(params);
+  const report = [];
+  for (const [kind, tris] of Object.entries(parts)) {
+    const r = checkManifold(tris);
+    const ok = r.bad === 0 && r.pinch === 0 && r.vol > 0;
+    if (!ok) failed++;
+    report.push(`${kind} ${ok ? 'OK' : 'ERR'} (${(r.vol / 1000).toFixed(1)} cm³, abiertas=${r.bad})`);
+  }
+  // El labio debe quedar dentro de la cara interior de la pantalla con la holgura pedida
+  const L = partsLayout(params);
+  let minGap = Infinity;
+  const inner = offsetShape(shape, params.thickness);
+  if (L.lipOuter) {
+    const innerProfile = makeProfile(inner);
+    for (let i = 0; i < L.lipOuter.length; i += 2) {
+      const x = L.lipOuter[i], y = L.lipOuter[i + 1];
+      minGap = Math.min(minGap, innerProfile.polarRadius(x, y) - Math.hypot(x, y));
+    }
+  }
+  const fitOk = !L.lipOuter || minGap > 0.1;
+  if (!fitOk) failed++;
+  const shade = buildFull(params, makeImage('cross'), resolveQuality(params, 'draft')).tris;
+  const rs = checkManifold(shade);
+  if (rs.bad) failed++;
+  console.log(`${fitOk ? 'OK ' : 'ERR'} piezas ${name}: ${report.join(', ')}, holgura mín. labio=${minGap.toFixed(3)} mm, pantalla abiertas=${rs.bad}`);
+}
+
 // Batería aleatoria (semilla fija) para cazar casos límite
 const fuzz = Number(process.argv[3] || 0);
 let pinched = 0;
