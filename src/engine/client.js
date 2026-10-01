@@ -30,7 +30,7 @@ export function createPreviewEngine(onResult, onError) {
   worker.onmessage = (e) => {
     const msg = e.data;
     busy = false;
-    if (msg.type === 'preview') onResult(msg);
+    if (msg.type === 'preview') onResult(msg, pending !== null);
     else if (msg.type === 'error') onError(msg.message);
     if (pending) {
       const req = pending;

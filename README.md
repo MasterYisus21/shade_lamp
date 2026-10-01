@@ -1,18 +1,53 @@
-# React + Vite
+# Lámpara de Sombras 3D
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+Aplicación web para diseñar lámparas de pared que proyectan una imagen como luz y
+sombra, y exportarlas en STL para imprimir en 3D.
 
-Currently, two official plugins are available:
+Subes una imagen en blanco y negro, ajustas su tamaño y posición sobre la pared, y
+la app calcula qué partes de la pantalla deben ser huecos para que la luz del
+bombillo dibuje esa imagen. La vista 3D muestra la pieza real y la luz que
+proyecta, calculada a partir de esa misma geometría.
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+## Funciones
 
-## React Compiler
+- **Formas:** cilindro y caja de esquinas redondeadas.
+- **Malla cerrada y nítida:** contornos exactos con esquinas definidas y STL
+  binario ligero. Las paredes de los huecos apuntan al bombillo para que el
+  grosor no recorte la sombra.
+- **Puentes** opcionales para sujetar las islas sueltas.
+- **Piezas encastrables:** base (pared), tapa (habitación) y poste hueco para el
+  cable, con holgura según el tipo de impresión (FDM 0.4, FDM 0.2 o resina).
+- **Cálculo en paralelo:** la vista previa se calcula en un Web Worker y la
+  exportación reparte el trabajo entre los núcleos del procesador.
 
-The React Compiler is enabled on this template. See [this documentation](https://react.dev/learn/react-compiler) for more information.
+## Uso
 
-Note: This will impact Vite dev & build performances.
+```bash
+npm install
+npm run dev
+```
 
-## Expanding the ESLint configuration
+Abre la dirección que muestra Vite (normalmente http://localhost:5173).
 
-If you are developing a production application, we recommend using TypeScript with type-aware lint rules enabled. Check out the [TS template](https://github.com/vitejs/vite/tree/main/packages/create-vite/template-react-ts) for information on how to integrate TypeScript and [`typescript-eslint`](https://typescript-eslint.io) in your project.
+Para verificar que el motor genera mallas cerradas, con casos fijos y 200
+configuraciones aleatorias:
+
+```bash
+node scripts/check-mesh.mjs medium 200
+```
+
+## Estructura
+
+| Carpeta | Contenido |
+| --- | --- |
+| `src/core/` | Motor geométrico sin dependencias del navegador: perfil de la forma, campo sólido/hueco, mallado, piezas y STL. |
+| `src/engine/` | Workers, carga de imágenes y exportación en paralelo. |
+| `src/components/` | Componentes de la interfaz. |
+| `src/Scene.jsx` | Visor 3D (react-three-fiber). |
+| `scripts/` | Herramientas de verificación. |
+
+## Coordenadas
+
+El bombillo está en el origen y la pared en `Z = distancia`. La pantalla se
+desenrolla en 2D como (longitud de arco, Z). Internamente todo se calcula en mm;
+la interfaz usa cm para las medidas grandes y mm para grosores y holguras.
