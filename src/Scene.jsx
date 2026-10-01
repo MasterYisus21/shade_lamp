@@ -1,4 +1,4 @@
-import React, { useMemo, useEffect } from 'react';
+import React, { useMemo, useEffect, useRef } from 'react';
 import { Canvas, useThree } from '@react-three/fiber';
 import { OrbitControls, Grid, Line } from '@react-three/drei';
 import * as THREE from 'three';
@@ -108,6 +108,79 @@ function CameraRig({ resetKey, target, size }) {
   return null;
 }
 
+/**
+ * ¿Cae el punto de la pared (cm) dentro de la imagen? Deshace la colocación de
+ * la imagen: giro de 180° en Y (x → -x) y luego la rotación propia.
+ */
+function insideImage(p, { offset, scale, rotation }) {
+  const a = -(p.x - offset[0]);
+  const b = p.y - offset[1];
+  const t = (rotation * Math.PI) / 180;
+  const u = a * Math.cos(t) + b * Math.sin(t);
+  const v = -a * Math.sin(t) + b * Math.cos(t);
+  return Math.abs(u) <= Math.abs(scale[0]) / 2 && Math.abs(v) <= Math.abs(scale[1]) / 2;
+}
+
+/**
+ * Pared. Con dragEnabled, arrastrar la imagen la desplaza: el puntero se
+ * proyecta en el plano de la pared, así la imagen sigue al mouse sin importar
+ * el ángulo de la cámara. Fuera de la imagen la cámara gira como siempre.
+ */
+function Wall({ distance, color, dragEnabled, placement, onDrag }) {
+  // Estado vivo de la escena (cámara, controles, canvas) fuera del render
+  const getThree = useThree((state) => state.get);
+  const drag = useRef(null);
+  const plane = useMemo(() => new THREE.Plane(new THREE.Vector3(0, 0, 1), -distance), [distance]);
+  const hit = (ray) => ray.intersectPlane(plane, new THREE.Vector3());
+  const setCursor = (c) => { getThree().gl.domElement.style.cursor = c; };
+  const setOrbit = (on) => {
+    const { controls } = getThree();
+    if (controls) controls.enabled = on;
+  };
+
+  useEffect(() => {
+    if (!dragEnabled) getThree().gl.domElement.style.cursor = '';
+  }, [dragEnabled, getThree]);
+
+  const end = (e) => {
+    if (!drag.current) return;
+    drag.current = null;
+    e.target.releasePointerCapture(e.pointerId);
+    setOrbit(true);
+    setCursor('grab');
+  };
+
+  return (
+    <mesh
+      position={[0, 0, distance + 0.05]}
+      onPointerDown={(e) => {
+        if (!dragEnabled || e.button !== 0) return;
+        const p = hit(e.ray);
+        if (!p || !insideImage(p, placement)) return;
+        e.stopPropagation();
+        drag.current = { x: p.x, y: p.y, ox: placement.offset[0], oy: placement.offset[1] };
+        e.target.setPointerCapture(e.pointerId);
+        // Los eventos de la escena llegan antes que los de OrbitControls: así no gira la cámara
+        setOrbit(false);
+        setCursor('grabbing');
+      }}
+      onPointerMove={(e) => {
+        const d = drag.current;
+        const p = hit(e.ray);
+        if (!p) return;
+        if (d) onDrag(d.ox + p.x - d.x, d.oy + p.y - d.y);
+        else if (dragEnabled) setCursor(insideImage(p, placement) ? 'grab' : '');
+      }}
+      onPointerUp={end}
+      onPointerCancel={end}
+      onPointerOut={() => { if (dragEnabled && !drag.current) setCursor(''); }}
+    >
+      <planeGeometry args={[400, 400]} />
+      <meshStandardMaterial color={color} roughness={1} side={THREE.DoubleSide} />
+    </mesh>
+  );
+}
+
 export default function Scene({
   lampTris,
   parts,
@@ -118,6 +191,7 @@ export default function Scene({
   distance, height, bulbRadius, sceneSize, viewSize = sceneSize, exploded,
   visible = { shade: true, base: true, cap: true, post: true },
   wallTone = 'dark', lightFillColor, resetKey = 0,
+  dragImage = false, onImageDrag,
 }) {
   const lampGeo = useTrisGeometry(lampTris);
   const baseGeo = useTrisGeometry(parts?.base);
@@ -168,10 +242,13 @@ export default function Scene({
       ))}
 
       {/* Pared */}
-      <mesh position={[0, 0, distance + 0.05]}>
-        <planeGeometry args={[400, 400]} />
-        <meshStandardMaterial color={WALL_COLORS[wallTone] || WALL_COLORS.dark} roughness={1} side={THREE.DoubleSide} />
-      </mesh>
+      <Wall
+        distance={distance}
+        color={WALL_COLORS[wallTone] || WALL_COLORS.dark}
+        dragEnabled={dragImage && !!onImageDrag}
+        placement={{ offset: [imgOffsetX, imgOffsetY], scale: [imgScaleX, imgScaleY], rotation: imgRotation }}
+        onDrag={onImageDrag}
+      />
 
       {/* Imagen original sobre la pared (referencia, cuando no se muestra la luz) */}
       {imageTex && !showShadow && (

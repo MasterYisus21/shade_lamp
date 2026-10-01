@@ -2,7 +2,7 @@ import React, { useState, useEffect, useMemo, useRef } from 'react';
 import {
   Image as ImageIcon, Lamp, Grid3x3, Puzzle, Download, Eye, EyeOff, LoaderCircle, Cylinder, Box,
   FlipHorizontal2, FlipVertical2, Lock, Unlock, Sun, Moon, Focus, Expand, Shrink, Lightbulb, Check,
-  TriangleAlert, Info, X,
+  TriangleAlert, Info, X, Move,
 } from 'lucide-react';
 import Scene from './Scene';
 import { LIGHT_COLORS } from './theme';
@@ -58,8 +58,8 @@ function App() {
   const [tab, setTab] = useState('image');
 
   // Bombillo (cm)
-  const [bulbRadius, setBulbRadius] = useState(1);
-  const [distance, setDistance] = useState(7);
+  const [bulbRadius, setBulbRadius] = useState(0.5);
+  const [distance, setDistance] = useState(5.8);
 
   // Geometría (cm, grosores en mm)
   const [shapeType, setShapeType] = useState('cylinder');
@@ -67,22 +67,23 @@ function App() {
   const [boxWidth, setBoxWidth] = useState(15);
   const [boxDepth, setBoxDepth] = useState(10);
   const [boxCornerRadius, setBoxCornerRadius] = useState(2);
-  const [height, setHeight] = useState(10);
+  const [height, setHeight] = useState(6);
   const [thickness, setThickness] = useState(2);
-  const [rim, setRim] = useState(2);
+  const [rim, setRim] = useState(4);
 
   // Imagen (cm)
   const [imageName, setImageName] = useState(null);
   const [imageData, setImageData] = useState(() => defaultImage());
   const [imgOffsetX, setImgOffsetX] = useState(0);
   const [imgOffsetY, setImgOffsetY] = useState(0);
-  const [imgScaleX, setImgScaleX] = useState(20);
-  const [imgScaleY, setImgScaleY] = useState(20);
+  const [imgScaleX, setImgScaleX] = useState(25);
+  const [imgScaleY, setImgScaleY] = useState(25);
   const [lockAspect, setLockAspect] = useState(true);
   const [imgRotation, setImgRotation] = useState(0);
   const [imgFlipX, setImgFlipX] = useState(false);
   const [imgFlipY, setImgFlipY] = useState(false);
   const [invertShadow, setInvertShadow] = useState(false);
+  const [dragImage, setDragImage] = useState(false);
 
   // Puentes (mm)
   const [supportType, setSupportType] = useState('none');
@@ -100,7 +101,7 @@ function App() {
   const [cableDiameter, setCableDiameter] = useState(DEFAULT_PARTS.cableRadius * 2);
 
   // Visor
-  const [showWall, setShowWall] = useState(true);
+  const [showWall, setShowWall] = useState(false);
   const [exploded, setExploded] = useState(false);
   const [visibleParts, setVisibleParts] = useState({ shade: true, cap: true, base: true, post: true });
   const [wallTone, setWallTone] = useState('dark');
@@ -109,6 +110,9 @@ function App() {
   const [preview, setPreview] = useState(null);
   const [computing, setComputing] = useState(false);
   const [previewError, setPreviewError] = useState(null);
+  const [imageLoading, setImageLoading] = useState(null); // { progress, stage }
+  const awaitingImageRef = useRef(false); // la carga termina cuando llega la vista previa con la imagen nueva
+  const sentImageRef = useRef(null);
 
   // Exportación
   const [exportQuality, setExportQuality] = useState('high');
@@ -178,9 +182,20 @@ function App() {
       (msg, hasPending) => {
         setPreview(msg);
         setPreviewError(null);
-        if (!hasPending) setComputing(false);
+        if (!hasPending) {
+          setComputing(false);
+          if (awaitingImageRef.current) {
+            awaitingImageRef.current = false;
+            setImageLoading(null);
+          }
+        }
       },
-      (message) => { setPreviewError(message); setComputing(false); },
+      (message) => {
+        setPreviewError(message);
+        setComputing(false);
+        awaitingImageRef.current = false;
+        setImageLoading(null);
+      },
     );
     engineRef.current = engine;
     return () => engine.dispose();
@@ -192,6 +207,11 @@ function App() {
 
   useEffect(() => {
     setComputing(true);
+    // A partir de esta petición, la vista previa ya usa la imagen nueva
+    if (sentImageRef.current !== imageData) {
+      sentImageRef.current = imageData;
+      awaitingImageRef.current = true;
+    }
     engineRef.current?.request(engineParams, showWall);
   }, [engineParams, imageData, showWall]);
 
@@ -211,19 +231,26 @@ function App() {
     if (lockAspect) setImgScaleX(round1(h / imageAspect));
   };
 
-  const handleImageFile = (file) => {
-    const reader = new FileReader();
-    reader.onload = async (event) => {
-      try {
-        const data = await loadImageLuminance(event.target.result);
-        setImageName(file.name.substring(0, file.name.lastIndexOf('.')) || file.name);
-        setImageData(data);
-        if (lockAspect) setImgScaleY(round1(imgScaleX * (data.height / data.width)));
-      } catch (err) {
-        setToast({ kind: 'error', text: err.message });
-      }
-    };
-    reader.readAsDataURL(file);
+  const handleImageFile = async (file) => {
+    if (imageLoading) return;
+    setImageLoading({ progress: 0, stage: 'Leyendo la imagen' });
+    try {
+      const data = await loadImageLuminance(file, (progress, stage) => setImageLoading({ progress, stage }));
+      setImageLoading({ progress: 0.85, stage: 'Calculando la lámpara' });
+      setImageName(file.name.substring(0, file.name.lastIndexOf('.')) || file.name);
+      setImageData(data);
+      if (lockAspect) setImgScaleY(round1(imgScaleX * (data.height / data.width)));
+    } catch (err) {
+      setImageLoading(null);
+      setToast({ kind: 'error', text: err.message });
+    }
+  };
+
+  // Arrastre con el mouse en la vista 3D (cm, mismo rango que los campos)
+  const handleImageDrag = (x, y) => {
+    const clampPos = (v) => Math.min(70, Math.max(-70, round1(v)));
+    setImgOffsetX(clampPos(x));
+    setImgOffsetY(clampPos(y));
   };
 
   const handleRemoveImage = () => {
@@ -326,13 +353,17 @@ function App() {
                   />
                 )}
               >
-                <div className="grid-2">
-                  <Field label="Ancho" unit="cm" value={imgScaleX} min={1} max={150} step={0.5} onChange={setWidthKeepingAspect} />
-                  <Field label="Alto" unit="cm" value={imgScaleY} min={1} max={150} step={0.5} onChange={setHeightKeepingAspect} />
-                  <Field label="Posición X" unit="cm" value={imgOffsetX} min={-70} max={70} step={0.5} onChange={setImgOffsetX} />
-                  <Field label="Posición Y" unit="cm" value={imgOffsetY} min={-70} max={70} step={0.5} onChange={setImgOffsetY} />
-                </div>
+                <Field label="Ancho" unit="cm" value={imgScaleX} min={1} max={150} step={0.5} onChange={setWidthKeepingAspect} />
+                <Field label="Alto" unit="cm" value={imgScaleY} min={1} max={150} step={0.5} onChange={setHeightKeepingAspect} />
+                <Field label="Posición X" unit="cm" value={imgOffsetX} min={-70} max={70} step={0.1} onChange={setImgOffsetX} />
+                <Field label="Posición Y" unit="cm" value={imgOffsetY} min={-70} max={70} step={0.1} onChange={setImgOffsetY} />
                 <Field label="Rotación" unit="°" value={imgRotation} min={-180} max={180} step={1} onChange={setImgRotation} />
+                <Switch
+                  checked={dragImage}
+                  onChange={setDragImage}
+                  label="Mover con el mouse"
+                  description="Arrastra la imagen sobre la pared en la vista 3D. Fuera de la imagen, la cámara gira como siempre."
+                />
                 <div className="toggle-row">
                   <IconToggle active={imgFlipX} onClick={() => setImgFlipX((v) => !v)} icon={<FlipHorizontal2 size={14} />} label="Reflejar X" />
                   <IconToggle active={imgFlipY} onClick={() => setImgFlipY((v) => !v)} icon={<FlipVertical2 size={14} />} label="Reflejar Y" />
@@ -374,7 +405,7 @@ function App() {
               </Card>
 
               <Card title="Bombillo">
-                <Field label="Distancia a la pared" unit="cm" value={effDistance} min={1} max={maxDistance} step={0.5} onChange={setDistance} />
+                <Field label="Distancia a la pared" unit="cm" value={effDistance} min={1} max={maxDistance} step={0.1} onChange={setDistance} />
                 <Field label="Radio del bombillo" unit="cm" value={effBulbRadius} min={0.1} max={maxBulbRadius} step={0.1} onChange={setBulbRadius} />
                 <div className="note">
                   <Info size={14} />
@@ -430,12 +461,10 @@ function App() {
                       hint="Espacio entre el labio y la pantalla. Más holgura = encaja más suelto." />
                   </Card>
                   <Card title="Medidas">
-                    <div className="grid-2">
-                      <Field label="Grosor de la base" unit="mm" value={baseThickness} min={1.5} max={10} step={0.5} onChange={setBaseThickness} />
-                      <Field label="Grosor de la tapa" unit="mm" value={capThickness} min={1} max={10} step={0.5} onChange={setCapThickness} />
-                      <Field label="Largo del labio" unit="mm" value={lipLength} min={2} max={15} step={0.5} onChange={setLipLength} />
-                      <Field label="Diámetro del poste" unit="mm" value={effPostDiameter} min={4} max={maxPostDiameter} step={0.5} onChange={setPostDiameter} />
-                    </div>
+                    <Field label="Grosor de la base" unit="mm" value={baseThickness} min={1.5} max={10} step={0.5} onChange={setBaseThickness} />
+                    <Field label="Grosor de la tapa" unit="mm" value={capThickness} min={1} max={10} step={0.5} onChange={setCapThickness} />
+                    <Field label="Largo del labio" unit="mm" value={lipLength} min={2} max={15} step={0.5} onChange={setLipLength} />
+                    <Field label="Diámetro del poste" unit="mm" value={effPostDiameter} min={4} max={maxPostDiameter} step={0.5} onChange={setPostDiameter} />
                     <Field label="Paso de cable" unit="mm" value={effCableDiameter} min={1} max={Math.max(1, effPostDiameter - 1.6)} step={0.5} onChange={setCableDiameter} />
                   </Card>
                 </>
@@ -485,6 +514,13 @@ function App() {
           </div>
           <div className="tool-group">
             <IconToggle active={showWall} onClick={() => setShowWall((v) => !v)} icon={<Sun size={14} />} label="Luz en la pared" />
+            <IconToggle
+              active={dragImage}
+              onClick={() => setDragImage((v) => !v)}
+              icon={<Move size={14} />}
+              label="Mover imagen"
+              title="Arrastrar la imagen sobre la pared con el mouse"
+            />
             {partsEnabled && (
               <IconToggle
                 active={exploded}
@@ -554,6 +590,8 @@ function App() {
           wallTone={wallTone}
           lightFillColor={lightColor}
           resetKey={cameraKey}
+          dragImage={dragImage}
+          onImageDrag={handleImageDrag}
         />
 
         {toast && (
@@ -564,6 +602,18 @@ function App() {
           </div>
         )}
       </main>
+
+      {imageLoading && (
+        <div className="modal-backdrop">
+          <div className="modal" role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(imageLoading.progress * 100)}>
+            <LoaderCircle size={28} className="spin accent" />
+            <h2>Cargando la imagen</h2>
+            <p>{imageLoading.stage}…</p>
+            <div className="progress"><div style={{ width: `${Math.round(imageLoading.progress * 100)}%` }} /></div>
+            <span className="progress-label">{Math.round(imageLoading.progress * 100)} %</span>
+          </div>
+        </div>
+      )}
 
       {exporting && (
         <div className="modal-backdrop">
