@@ -2,7 +2,7 @@ import React, { useMemo, useEffect, useRef } from 'react';
 import { Canvas, useThree } from '@react-three/fiber';
 import { OrbitControls, Grid, Line } from '@react-three/drei';
 import * as THREE from 'three';
-import { LIGHT_COLORS, WALL_COLORS, PART_COLORS } from './theme';
+import { LIGHT_COLORS, WALL_COLORS, PART_COLORS, lithoBrightness } from './theme';
 
 // La escena trabaja en cm; la malla del motor viene en mm (escala 0.1).
 // Bombillo en el origen, pared en Z = distancia.
@@ -87,6 +87,33 @@ function useImageTexture(image) {
     tex.needsUpdate = true;
     return tex;
   }, [image]);
+  useEffect(() => () => texture && texture.dispose(), [texture]);
+  return texture;
+}
+
+/** Litofanía encendida: brillo de cada escalón con el color de la luz. */
+function useCapGlowTexture(glow, lightFillColor) {
+  const texture = useMemo(() => {
+    if (!glow) return null;
+    const { levels, size, n } = glow.raster;
+    const [r, g, b] = (LIGHT_COLORS[lightFillColor] || LIGHT_COLORS.warm).rgb;
+    const shade = Array.from({ length: n + 1 }, (_, l) => lithoBrightness(l, glow.step));
+    const data = new Uint8Array(size * size * 4);
+    for (let i = 0; i < levels.length; i++) {
+      if (levels[i] === 255) continue;
+      const k = shade[levels[i]];
+      data[4 * i] = r * k;
+      data[4 * i + 1] = g * k;
+      data[4 * i + 2] = b * k;
+      data[4 * i + 3] = 255;
+    }
+    // Mismo marco que la tapa (fila 0 = y mínima), así que el plano no se gira
+    const tex = new THREE.DataTexture(data, size, size, THREE.RGBAFormat);
+    tex.colorSpace = THREE.SRGBColorSpace;
+    tex.magFilter = THREE.LinearFilter;
+    tex.needsUpdate = true;
+    return tex;
+  }, [glow, lightFillColor]);
   useEffect(() => () => texture && texture.dispose(), [texture]);
   return texture;
 }
@@ -191,7 +218,7 @@ export default function Scene({
   distance, height, bulbRadius, sceneSize, viewSize = sceneSize, exploded,
   visible = { shade: true, base: true, cap: true, post: true },
   wallTone = 'dark', lightFillColor, resetKey = 0,
-  dragImage = false, onImageDrag,
+  dragImage = false, onImageDrag, capGlow = null,
 }) {
   const lampGeo = useTrisGeometry(lampTris);
   const baseGeo = useTrisGeometry(parts?.base);
@@ -199,6 +226,7 @@ export default function Scene({
   const postGeo = useTrisGeometry(parts?.post);
   const wallTex = useWallTexture(wall, lightFillColor, wallTone);
   const imageTex = useImageTexture(image);
+  const capGlowTex = useCapGlowTexture(capGlow, lightFillColor);
   const wallHalfCm = wall ? wall.half / 10 : 0;
   const showShadow = showWall && wallTex;
   // Vista separada: la pantalla y la tapa se alejan de la base hacia la habitación
@@ -240,6 +268,14 @@ export default function Scene({
           <meshStandardMaterial color={PART_COLORS[kind]} roughness={0.75} metalness={0} />
         </mesh>
       ))}
+
+      {/* Litofanía encendida, justo delante de la cara exterior de la tapa */}
+      {capGlowTex && visible.cap && (
+        <mesh position={[0, 0, capGlow.z + OFFSET.cap - 0.02]}>
+          <planeGeometry args={[capGlow.raster.half / 5, capGlow.raster.half / 5]} />
+          <meshBasicMaterial map={capGlowTex} transparent depthWrite={false} side={THREE.DoubleSide} />
+        </mesh>
+      )}
 
       {/* Pared */}
       <Wall

@@ -6,10 +6,8 @@
 // (clearance). La base además tiene un zócalo para el poste y un agujero para el
 // cable; el poste es un tubo hueco que sostiene el bombillo.
 
-import earcut from 'earcut';
 import { makeProfile, offsetShape } from './profile.js';
-
-const TOL = 0.01; // error de cuerda al muestrear curvas (mm)
+import { shapeRing, circleRing, solidBuilder } from './solid.js';
 
 export const DEFAULT_PARTS = {
   enabled: true,
@@ -25,82 +23,37 @@ export const DEFAULT_PARTS = {
   screwHoleRadius: 2,
 };
 
+/**
+ * Tapa: 'plain' es un disco liso; 'litho' una litofanía por capas (ver lithocap.js).
+ * Litofanía: base + levels escalones de step mm; size, offsetX/Y (mm) y rotation (°)
+ * colocan la imagen vista desde la habitación; margin es la zona segura entre el
+ * labio y la litofanía; minFeature, el detalle más pequeño que se conserva.
+ */
+export const DEFAULT_CAP = {
+  mode: 'plain',
+  size: 40,
+  offsetX: 0,
+  offsetY: 0,
+  rotation: 0,
+  invert: false,
+  levels: 6,
+  base: 0.6,
+  step: 0.4,
+  margin: 2,
+  minFeature: 0.8,
+};
+
+export const capSettings = (params) => ({ ...DEFAULT_CAP, ...(params.parts && params.parts.cap) });
+
+/** Grosor total de la tapa (mm): el disco liso o el aro de la litofanía. */
+export function capThickness(params) {
+  const cap = capSettings(params);
+  if (cap.mode === 'litho') return cap.base + cap.levels * cap.step;
+  return { ...DEFAULT_PARTS, ...params.parts }.capThickness;
+}
+
 /** Separación entre la pantalla y la pared (la ocupa la base). */
 export const wallGap = (params) => (params.parts && params.parts.enabled ? params.parts.baseThickness : 0);
-
-function validShape(shape) {
-  if (shape.type === 'cylinder') return shape.radius > 0.05;
-  return shape.width > 0.1 && shape.depth > 0.1;
-}
-
-/** Contorno (antihorario) de un perfil, muestreado con tolerancia de cuerda. */
-function shapeRing(shape) {
-  if (!validShape(shape)) return null;
-  const profile = makeProfile(shape);
-  const pts = [];
-  for (const seg of profile.segments) {
-    if (seg.type === 'line') {
-      pts.push(seg.x0, seg.y0);
-    } else {
-      const maxAng = TOL >= seg.r ? Math.PI / 4 : 2 * Math.acos(1 - TOL / seg.r);
-      const ang = seg.len / seg.r;
-      const n = Math.max(1, Math.ceil(ang / maxAng));
-      for (let k = 0; k < n; k++) {
-        const a = seg.a0 + (ang * k) / n;
-        pts.push(seg.cx + seg.r * Math.cos(a), seg.cy + seg.r * Math.sin(a));
-      }
-    }
-  }
-  // Sin puntos colineales: earcut los descartaría y las paredes no coincidirían
-  const out = [];
-  const n = pts.length / 2;
-  for (let k = 0; k < n; k++) {
-    const p = (k + n - 1) % n;
-    const q = (k + 1) % n;
-    const cross = (pts[2 * k] - pts[2 * p]) * (pts[2 * q + 1] - pts[2 * p + 1])
-      - (pts[2 * k + 1] - pts[2 * p + 1]) * (pts[2 * q] - pts[2 * p]);
-    if (Math.abs(cross) > 1e-9) out.push(pts[2 * k], pts[2 * k + 1]);
-  }
-  return out;
-}
-
-const circleRing = (cx, cy, r) => shapeRing({ type: 'cylinder', radius: r }).map((v, i) => v + (i % 2 ? cy : cx));
-
-/** Acumula triángulos de un sólido hecho de caras horizontales y paredes verticales. */
-function solidBuilder() {
-  const out = [];
-  return {
-    /** Cara horizontal a altura h. up = normal hacia +h. */
-    face(h, outer, holes, up) {
-      const flat = outer.slice();
-      const idx = [];
-      for (const hole of holes) {
-        idx.push(flat.length / 2);
-        for (const v of hole) flat.push(v);
-      }
-      const tris = earcut(flat, idx, 2);
-      for (let t = 0; t < tris.length; t += 3) {
-        let a = tris[t], b = tris[t + 1], c = tris[t + 2];
-        const area = (flat[2 * b] - flat[2 * a]) * (flat[2 * c + 1] - flat[2 * a + 1])
-          - (flat[2 * c] - flat[2 * a]) * (flat[2 * b + 1] - flat[2 * a + 1]);
-        if ((area < 0) === up) { const tmp = b; b = c; c = tmp; }
-        out.push(flat[2 * a], flat[2 * a + 1], h, flat[2 * b], flat[2 * b + 1], h, flat[2 * c], flat[2 * c + 1], h);
-      }
-    },
-    /** Pared vertical a lo largo de un anillo antihorario. solidInside: el material está dentro del anillo. */
-    wall(ring, h0, h1, solidInside) {
-      const n = ring.length / 2;
-      for (let k = 0; k < n; k++) {
-        const k2 = (k + 1) % n;
-        let ax = ring[2 * k], ay = ring[2 * k + 1], bx = ring[2 * k2], by = ring[2 * k2 + 1];
-        if (!solidInside) { [ax, bx] = [bx, ax]; [ay, by] = [by, ay]; }
-        out.push(ax, ay, h0, bx, by, h0, bx, by, h1);
-        out.push(ax, ay, h0, bx, by, h1, ax, ay, h1);
-      }
-    },
-    result: () => Float32Array.from(out),
-  };
-}
 
 /** Geometría y medidas derivadas de los parámetros (todo en mm). */
 export function partsLayout(params) {
@@ -220,7 +173,7 @@ export function partToWorld(tris, kind, params) {
   const D = params.distance;
   const gap = wallGap(params);
   const zMin = D - gap - params.height;
-  const capT = { ...DEFAULT_PARTS, ...params.parts }.capThickness;
+  const capT = capThickness(params);
   for (let i = 0; i < tris.length; i += 3) {
     const x = tris[i], y = tris[i + 1], h = tris[i + 2];
     if (kind === 'cap') {
@@ -233,6 +186,7 @@ export function partToWorld(tris, kind, params) {
   return out;
 }
 
+/** Base, tapa lisa y poste (la tapa litofanía se construye en lithocap.js). */
 export function buildAllParts(params) {
   return { base: buildBase(params), cap: buildCap(params), post: buildPost(params) };
 }

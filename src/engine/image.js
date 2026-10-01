@@ -81,3 +81,32 @@ export function defaultImage(size = 256) {
   }
   return { lum, width: size, height: size };
 }
+
+/** Logo de prueba para la tapa: una estrella con degradado (muestra los tonos). */
+export function defaultCapImage(size = 256) {
+  const lum = new Uint8Array(size * size).fill(255);
+  const star = [];
+  for (let k = 0; k < 10; k++) {
+    const a = -Math.PI / 2 + (k * Math.PI) / 5;
+    const r = k % 2 ? 0.2 : 0.46;
+    star.push([0.5 + r * Math.cos(a), 0.5 + r * Math.sin(a)]);
+  }
+  const inside = (x, y) => {
+    let c = false;
+    for (let i = 0, j = star.length - 1; i < star.length; j = i++) {
+      const [xi, yi] = star[i];
+      const [xj, yj] = star[j];
+      if ((yi > y) !== (yj > y) && x < ((xj - xi) * (y - yi)) / (yj - yi) + xi) c = !c;
+    }
+    return c;
+  };
+  for (let y = 0; y < size; y++) {
+    for (let x = 0; x < size; x++) {
+      const u = (x + 0.5) / size;
+      const v = (y + 0.5) / size;
+      // De negro arriba a gris claro abajo
+      if (inside(u, v)) lum[y * size + x] = Math.round(220 * Math.min(1, Math.max(0, (v - 0.04) / 0.8)));
+    }
+  }
+  return { lum, width: size, height: size };
+}

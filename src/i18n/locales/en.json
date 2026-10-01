@@ -137,7 +137,8 @@
     "doneAll": "{name} · {count} parts · {mb} MB · {seconds} s",
     "coarsened": " · cell enlarged to {cell} mm due to size",
     "donePart": "{name} downloaded",
-    "error": "The STL could not be generated: {message}"
+    "error": "The STL could not be generated: {message}",
+    "generatingPart": "Generating the {part}"
   },
   "loading": {
     "title": "Loading image",
@@ -165,5 +166,24 @@
     "computing": "Computing…",
     "error": "Error: {message}",
     "close": "Close"
+  },
+  "cap": {
+    "title": "Cap",
+    "plain": "Plain",
+    "litho": "Lithophane",
+    "lithoHint": "The cap shows your logo when the lamp is on: the room side is flat and, on the inside, steps get thicker with darker tones.",
+    "sample": "Sample logo (star)",
+    "glow": "How it will look when lit",
+    "size": "Image width",
+    "invert": "Invert tones",
+    "layersTitle": "Lithophane layers",
+    "levels": "Tone levels",
+    "base": "Base",
+    "step": "Step height",
+    "margin": "Rim safety margin",
+    "minFeature": "Smallest detail",
+    "minFeatureHint": "Smooths the image and removes details smaller than this (≈ 2 × nozzle).",
+    "printNote": "Total thickness {total} mm. Print it lying flat, flat face on the bed, with a layer height that divides {step} mm (e.g. 0.2).",
+    "hotspot": "The bulb is {gap} mm from the cap: the center will look brighter. Aim for at least {min} mm (move the bulb toward the wall or make the shade longer)."
   }
 }

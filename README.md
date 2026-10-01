@@ -17,6 +17,9 @@ proyecta, calculada a partir de esa misma geometría.
 - **Puentes** opcionales para sujetar las islas sueltas.
 - **Piezas encastrables:** base (pared), tapa (habitación) y poste hueco para el
   cable, con holgura según el tipo de impresión (FDM 0.4, FDM 0.2 o resina).
+- **Tapa litofanía por capas** (opcional): un logo propio en hasta 6 niveles de
+  tono. La cara hacia la habitación es plana y los escalones miran al bombillo,
+  así se imprime acostada y sin soportes; un aro con el labio le da rigidez.
 - **Cálculo en paralelo:** la vista previa se calcula en un Web Worker y la
   exportación reparte el trabajo entre los núcleos del procesador.
 

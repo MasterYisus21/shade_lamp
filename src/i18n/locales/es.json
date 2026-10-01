@@ -137,7 +137,8 @@
     "doneAll": "{name} · {count} piezas · {mb} MB · {seconds} s",
     "coarsened": " · celda ampliada a {cell} mm por el tamaño",
     "donePart": "{name} descargado",
-    "error": "No se pudo generar el STL: {message}"
+    "error": "No se pudo generar el STL: {message}",
+    "generatingPart": "Generando {part}"
   },
   "loading": {
     "title": "Cargando la imagen",
@@ -165,5 +166,24 @@
     "computing": "Calculando…",
     "error": "Error: {message}",
     "close": "Cerrar"
+  },
+  "cap": {
+    "title": "Tapa",
+    "plain": "Lisa",
+    "litho": "Litofanía",
+    "lithoHint": "La tapa muestra tu logo al encender la lámpara: la cara hacia la habitación es plana y, por dentro, escalones de grosor según el tono.",
+    "sample": "Logo de prueba (estrella)",
+    "glow": "Así se verá encendida",
+    "size": "Ancho de la imagen",
+    "invert": "Invertir tonos",
+    "layersTitle": "Capas de la litofanía",
+    "levels": "Niveles de tono",
+    "base": "Base",
+    "step": "Altura de cada escalón",
+    "margin": "Zona segura del aro",
+    "minFeature": "Detalle mínimo",
+    "minFeatureHint": "Suaviza la imagen y elimina detalles más pequeños que esto (≈ 2 × boquilla).",
+    "printNote": "Grosor total {total} mm. Imprime acostada, con la cara plana sobre la cama, y usa una altura de capa que divida {step} mm (p. ej. 0.2).",
+    "hotspot": "El bombillo queda a {gap} mm de la tapa: el centro se verá más brillante. Lo ideal es al menos {min} mm (acerca el bombillo a la pared o alarga la pantalla)."
   }
 }

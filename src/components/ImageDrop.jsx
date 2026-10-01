@@ -32,7 +32,7 @@ function Thumbnail({ image }) {
   return <canvas ref={ref} className="thumb" />;
 }
 
-export default function ImageDrop({ image, name, isCustom, onFile, onRemove }) {
+export default function ImageDrop({ image, name, isCustom, onFile, onRemove, sampleLabel }) {
   const { t } = useI18n();
   const [over, setOver] = useState(false);
   const inputRef = useRef(null);
@@ -56,7 +56,7 @@ export default function ImageDrop({ image, name, isCustom, onFile, onRemove }) {
         <Thumbnail image={image} />
       </div>
       <div className="drop-info">
-        <span className="drop-name">{isCustom ? name : t('image.sample')}</span>
+        <span className="drop-name">{isCustom ? name : sampleLabel || t('image.sample')}</span>
         <span className="hint">{image.width} × {image.height} px</span>
         <span className="drop-cta"><ImagePlus size={14} /> {isCustom ? t('image.change') : t('image.upload')}</span>
       </div>

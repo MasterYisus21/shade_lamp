@@ -1,16 +1,25 @@
 // Lado del hilo principal: vista previa en vivo y exportación en paralelo.
 
 import { planForQuality, resolveQuality, writeBinaryStl } from '../core/engine.js';
-import { buildBase, buildCap, buildPost } from '../core/parts.js';
-
-const PART_BUILDERS = { base: buildBase, cap: buildCap, post: buildPost };
-
-/** STL de una pieza complementaria (ya en su orientación de impresión). */
-export function exportPartStl(params, kind) {
-  return writeBinaryStl(PART_BUILDERS[kind](params), `shade_lamp ${kind}`);
-}
 
 const newWorker = () => new Worker(new URL('./engine.worker.js', import.meta.url), { type: 'module' });
+
+/**
+ * STL de una pieza complementaria (ya en su orientación de impresión). Se genera
+ * en un worker: la tapa litofanía puede tardar unos segundos.
+ * @returns {Promise<ArrayBuffer>}
+ */
+export function exportPartStl(params, kind, capImage) {
+  const worker = newWorker();
+  return new Promise((resolve, reject) => {
+    worker.onmessage = (e) => {
+      if (e.data.type === 'error') reject(new Error(e.data.message));
+      else resolve(e.data.buffer);
+    };
+    worker.onerror = (err) => reject(new Error(err.message || 'Error en el worker'));
+    worker.postMessage({ type: 'part', id: 0, params, kind, capImage });
+  }).finally(() => worker.terminate());
+}
 
 /**
  * Vista previa: un worker dedicado. Si llegan peticiones mientras calcula, solo
@@ -42,6 +51,9 @@ export function createPreviewEngine(onResult, onError) {
   return {
     setImage(image) {
       worker.postMessage({ type: 'setImage', image });
+    },
+    setCapImage(image) {
+      worker.postMessage({ type: 'setCapImage', image });
     },
     request(params, withWall) {
       const req = { params, withWall };

@@ -2,16 +2,17 @@ import React, { useState, useEffect, useMemo, useRef } from 'react';
 import {
   Image as ImageIcon, Lamp, Grid3x3, Puzzle, Download, Eye, EyeOff, LoaderCircle, Cylinder, Box,
   FlipHorizontal2, FlipVertical2, Lock, Unlock, Sun, Moon, Focus, Expand, Shrink, Lightbulb, Check,
-  TriangleAlert, Info, X, Move, Languages,
+  TriangleAlert, Info, X, Move, Languages, Contrast, Layers,
 } from 'lucide-react';
 import Scene from './Scene';
 import { LIGHT_COLORS } from './theme';
 import { Field, Segmented, Switch, SelectField, Card, IconToggle } from './components/ui';
 import ImageDrop from './components/ImageDrop';
+import CapGlow from './components/CapGlow';
 import { createPreviewEngine, exportStl, exportPartStl } from './engine/client';
-import { loadImageLuminance, defaultImage } from './engine/image';
+import { loadImageLuminance, defaultImage, defaultCapImage } from './engine/image';
 import { QUALITY } from './core/engine';
-import { DEFAULT_PARTS } from './core/parts';
+import { DEFAULT_PARTS, DEFAULT_CAP, capThickness as capTotalThickness } from './core/parts';
 import { zipFiles } from './engine/zip';
 import { useI18n, setLanguage, LANGUAGES } from './i18n';
 import './index.css';
@@ -47,6 +48,9 @@ function downloadBlob(blob, name) {
 }
 
 const round1 = (v) => Math.round(v * 10) / 10;
+
+// Por debajo de esta distancia (mm) el bombillo marca un punto brillante en la litofanía
+const LITHO_MIN_GAP = 15;
 
 const stlBlob = (buffer) => new Blob([buffer], { type: 'model/stl' });
 
@@ -96,6 +100,12 @@ function App() {
   const [clearance, setClearance] = useState(NOZZLES['0.4'].clearance);
   const [postDiameter, setPostDiameter] = useState(DEFAULT_PARTS.postOuterRadius * 2);
   const [cableDiameter, setCableDiameter] = useState(DEFAULT_PARTS.cableRadius * 2);
+
+  // Tapa (mm): lisa o litofanía por capas con su propia imagen
+  const [cap, setCap] = useState(() => ({ ...DEFAULT_CAP }));
+  const setCapValue = (key) => (value) => setCap((c) => ({ ...c, [key]: value }));
+  const [capImageName, setCapImageName] = useState(null);
+  const [capImageData, setCapImageData] = useState(() => defaultCapImage());
 
   // Visor
   const [showWall, setShowWall] = useState(false);
@@ -156,6 +166,7 @@ function App() {
       clearance,
       postOuterRadius: effPostDiameter / 2,
       cableRadius: effCableDiameter / 2,
+      cap,
     },
     image: {
       offsetX: imgOffsetX * 10,
@@ -171,7 +182,10 @@ function App() {
   }), [shapeType, radius, boxWidth, boxDepth, effCorner, effThickness, height, effDistance, effBulbRadius, effRim,
     imgOffsetX, imgOffsetY, imgScaleX, imgScaleY, imgRotation, imgFlipX, imgFlipY, invertShadow,
     supportType, supportThickness, supportSpacing,
-    partsEnabled, baseThickness, capThickness, lipLength, clearance, effPostDiameter, effCableDiameter]);
+    partsEnabled, baseThickness, capThickness, lipLength, clearance, effPostDiameter, effCableDiameter, cap]);
+  const isLitho = partsEnabled && cap.mode === 'litho';
+  // Espacio entre la superficie del bombillo y la tapa
+  const lithoGap = (bulbDepth - effBulbRadius) * 10;
 
   // Motor de vista previa (worker)
   const engineRef = useRef(null);
@@ -204,14 +218,19 @@ function App() {
   }, [imageData]);
 
   useEffect(() => {
+    engineRef.current?.setCapImage(capImageData);
+  }, [capImageData]);
+
+  useEffect(() => {
     setComputing(true);
-    // A partir de esta petición, la vista previa ya usa la imagen nueva
-    if (sentImageRef.current !== imageData) {
-      sentImageRef.current = imageData;
+    // A partir de esta petición, la vista previa ya usa las imágenes nuevas
+    const sent = sentImageRef.current;
+    if (!sent || sent.wall !== imageData || sent.cap !== capImageData) {
+      sentImageRef.current = { wall: imageData, cap: capImageData };
       awaitingImageRef.current = true;
     }
     engineRef.current?.request(engineParams, showWall);
-  }, [engineParams, imageData, showWall]);
+  }, [engineParams, imageData, capImageData, showWall]);
 
   useEffect(() => {
     if (!toast) return undefined;
@@ -229,13 +248,19 @@ function App() {
     if (lockAspect) setImgScaleX(round1(h / imageAspect));
   };
 
-  const handleImageFile = async (file) => {
+  const handleImageFile = async (file, target = 'wall') => {
     if (imageLoading) return;
     setImageLoading({ progress: 0, stage: 'read' });
     try {
       const data = await loadImageLuminance(file, (progress, stage) => setImageLoading({ progress, stage }));
       setImageLoading({ progress: 0.85, stage: 'lamp' });
-      setImageName(file.name.substring(0, file.name.lastIndexOf('.')) || file.name);
+      const name = file.name.substring(0, file.name.lastIndexOf('.')) || file.name;
+      if (target === 'cap') {
+        setCapImageName(name);
+        setCapImageData(data);
+        return;
+      }
+      setImageName(name);
       setImageData(data);
       if (lockAspect) setImgScaleY(round1(imgScaleX * (data.height / data.width)));
     } catch (err) {
@@ -268,18 +293,21 @@ function App() {
   const shadeFile = () => `${baseName}_${t('files.shade')}_${exportQuality}.stl`;
   const mb = (bytes) => (bytes / 1e6).toFixed(1);
 
+  const partStl = (kind) => exportPartStl(engineParams, kind, capImageData);
+
   const handleExport = async () => {
-    // Base, tapa y poste se generan al instante; la pantalla usa los workers
-    if (!needsShade) {
-      const name = partFile(target);
-      downloadBlob(stlBlob(exportPartStl(engineParams, target)), name);
-      setToast({ kind: 'ok', text: t('export.donePart', { name }) });
-      return;
-    }
     setExporting({ progress: 0 });
     const t0 = performance.now();
     try {
-      const shade = await exportStl(engineParams, imageData, exportQuality, (p) => setExporting({ progress: p }));
+      if (!needsShade) {
+        const name = partFile(target);
+        downloadBlob(stlBlob(await partStl(target)), name);
+        setToast({ kind: 'ok', text: t('export.donePart', { name }) });
+        return;
+      }
+      // La pantalla ocupa casi todo el tiempo; las piezas, el resto de la barra
+      const shareOfShade = target === 'all' ? 0.85 : 1;
+      const shade = await exportStl(engineParams, imageData, exportQuality, (p) => setExporting({ progress: p * shareOfShade }));
       const coarsened = shade.coarsened ? t('export.coarsened', { cell: shade.cell.toFixed(3) }) : '';
       if (target === 'shade') {
         const name = shadeFile();
@@ -295,10 +323,12 @@ function App() {
         });
         return;
       }
-      const files = [
-        { name: shadeFile(), data: shade.buffer },
-        ...PIECES.filter((k) => k !== 'shade').map((k) => ({ name: partFile(k), data: exportPartStl(engineParams, k) })),
-      ];
+      const files = [{ name: shadeFile(), data: shade.buffer }];
+      const others = PIECES.filter((k) => k !== 'shade');
+      for (const [i, k] of others.entries()) {
+        files.push({ name: partFile(k), data: await partStl(k) });
+        setExporting({ progress: shareOfShade + ((1 - shareOfShade) * (i + 1)) / others.length });
+      }
       const zip = zipFiles(files);
       const name = `${baseName}_${exportQuality}.zip`;
       downloadBlob(zip, name);
@@ -497,11 +527,70 @@ function App() {
                   </Card>
                   <Card title={t('partsTab.sizes')}>
                     <Field label={t('partsTab.baseThickness')} unit="mm" value={baseThickness} min={1.5} max={10} step={0.5} onChange={setBaseThickness} />
-                    <Field label={t('partsTab.capThickness')} unit="mm" value={capThickness} min={1} max={10} step={0.5} onChange={setCapThickness} />
                     <Field label={t('partsTab.lipLength')} unit="mm" value={lipLength} min={2} max={15} step={0.5} onChange={setLipLength} />
                     <Field label={t('partsTab.postDiameter')} unit="mm" value={effPostDiameter} min={4} max={maxPostDiameter} step={0.5} onChange={setPostDiameter} />
                     <Field label={t('partsTab.cable')} unit="mm" value={effCableDiameter} min={1} max={Math.max(1, effPostDiameter - 1.6)} step={0.5} onChange={setCableDiameter} />
                   </Card>
+
+                  <Card title={t('cap.title')}>
+                    <Segmented
+                      value={cap.mode}
+                      onChange={setCapValue('mode')}
+                      options={[
+                        { value: 'plain', label: t('cap.plain') },
+                        { value: 'litho', label: t('cap.litho'), icon: <Layers size={14} /> },
+                      ]}
+                    />
+                    {cap.mode === 'plain' ? (
+                      <Field label={t('partsTab.capThickness')} unit="mm" value={capThickness} min={1} max={10} step={0.5} onChange={setCapThickness} />
+                    ) : (
+                      <>
+                        <p className="hint">{t('cap.lithoHint')}</p>
+                        <ImageDrop
+                          image={capImageData}
+                          name={capImageName}
+                          isCustom={!!capImageName}
+                          sampleLabel={t('cap.sample')}
+                          onFile={(file) => handleImageFile(file, 'cap')}
+                          onRemove={() => { setCapImageName(null); setCapImageData(defaultCapImage()); }}
+                        />
+                        {preview?.capRaster && (
+                          <div className="cap-glow-wrap">
+                            <CapGlow raster={preview.capRaster} step={cap.step} rgb={LIGHT_COLORS[lightColor].rgb} />
+                            <span className="hint">{t('cap.glow')}</span>
+                          </div>
+                        )}
+                        <Field label={t('cap.size')} unit="mm" value={cap.size} min={5} max={300} step={1} onChange={setCapValue('size')} />
+                        <Field label={t('position.x')} unit="mm" value={cap.offsetX} min={-100} max={100} step={0.5} onChange={setCapValue('offsetX')} />
+                        <Field label={t('position.y')} unit="mm" value={cap.offsetY} min={-100} max={100} step={0.5} onChange={setCapValue('offsetY')} />
+                        <Field label={t('position.rotation')} unit="°" value={cap.rotation} min={-180} max={180} step={1} onChange={setCapValue('rotation')} />
+                        <div className="toggle-row">
+                          <IconToggle active={cap.invert} onClick={() => setCapValue('invert')(!cap.invert)} icon={<Contrast size={14} />} label={t('cap.invert')} />
+                        </div>
+                      </>
+                    )}
+                  </Card>
+
+                  {cap.mode === 'litho' && (
+                    <Card title={t('cap.layersTitle')}>
+                      <Field label={t('cap.levels')} value={cap.levels} min={2} max={6} step={1} onChange={(v) => setCapValue('levels')(Math.round(v))} />
+                      <Field label={t('cap.base')} unit="mm" value={cap.base} min={0.2} max={2} step={0.1} onChange={setCapValue('base')} />
+                      <Field label={t('cap.step')} unit="mm" value={cap.step} min={0.1} max={1} step={0.05} onChange={setCapValue('step')} />
+                      <Field label={t('cap.margin')} unit="mm" value={cap.margin} min={0.5} max={10} step={0.5} onChange={setCapValue('margin')} />
+                      <Field label={t('cap.minFeature')} unit="mm" value={cap.minFeature} min={0.2} max={3} step={0.1} onChange={setCapValue('minFeature')}
+                        hint={t('cap.minFeatureHint')} />
+                      <div className="note">
+                        <Info size={14} />
+                        <span>{t('cap.printNote', { total: capTotalThickness(engineParams).toFixed(1), step: cap.step })}</span>
+                      </div>
+                      {lithoGap < LITHO_MIN_GAP && (
+                        <div className="note warn">
+                          <TriangleAlert size={14} />
+                          <span>{t('cap.hotspot', { gap: Math.max(0, lithoGap).toFixed(0), min: LITHO_MIN_GAP })}</span>
+                        </div>
+                      )}
+                    </Card>
+                  )}
                 </>
               )}
             </>
@@ -642,6 +731,11 @@ function App() {
           resetKey={cameraKey}
           dragImage={dragImage}
           onImageDrag={handleImageDrag}
+          capGlow={isLitho && preview?.capRaster ? {
+            raster: preview.capRaster,
+            step: cap.step,
+            z: effDistance - gapCm - height - capTotalThickness(engineParams) / 10,
+          } : null}
         />
 
         {toast && (
@@ -669,7 +763,11 @@ function App() {
         <div className="modal-backdrop">
           <div className="modal">
             <LoaderCircle size={28} className="spin accent" />
-            <h2>{target === 'all' ? t('export.generatingAll') : t('export.generatingShade')}</h2>
+            <h2>
+              {target === 'all' ? t('export.generatingAll')
+                : target === 'shade' ? t('export.generatingShade')
+                  : t('export.generatingPart', { part: t(`parts.${target}`).toLowerCase() })}
+            </h2>
             <p>{t('export.modalText', { quality: t(`quality.${exportQuality}`).toLowerCase() })}</p>
             <div className="progress"><div style={{ width: `${Math.round(exporting.progress * 100)}%` }} /></div>
             <span className="progress-label">{Math.round(exporting.progress * 100)} %</span>

@@ -4,7 +4,8 @@
 
 import { buildFull, QUALITY, resolveQuality, writeBinaryStl, toPrintFrame, wallLightMap, buildChunk } from '../src/core/engine.js';
 import { planGrid } from '../src/core/field.js';
-import { buildAllParts, partsLayout, DEFAULT_PARTS } from '../src/core/parts.js';
+import { buildAllParts, partsLayout, DEFAULT_PARTS, capThickness } from '../src/core/parts.js';
+import { buildLithoCap } from '../src/core/lithocap.js';
 import { makeProfile, offsetShape } from '../src/core/profile.js';
 
 const quality = process.argv[2] || 'medium';
@@ -26,6 +27,9 @@ function makeImage(kind, size = 512) {
         ink = f > 0.6;
       }
       if (ink) lum[y * size + x] = 0;
+      // Tonos continuos para la litofanía
+      if (kind === 'gradient') lum[y * size + x] = Math.round(255 * (x / (size - 1)));
+      if (kind === 'waves') lum[y * size + x] = Math.round(127.5 + 127.5 * Math.sin(u * 40) * Math.cos(v * 33));
     }
   }
   return { lum, width: size, height: size };
@@ -164,6 +168,29 @@ for (const [name, shape] of partShapes) {
   const rs = checkManifold(shade);
   if (rs.bad) failed++;
   console.log(`${fitOk ? 'OK ' : 'ERR'} piezas ${name}: ${report.join(', ')}, holgura mín. labio=${minGap.toFixed(3)} mm, pantalla abiertas=${rs.bad}`);
+}
+
+// Tapa litofanía por capas: malla cerrada y grosor máximo igual al del aro
+const lithoCases = [
+  ['cilindro', { type: 'cylinder', radius: 30 }, 'gradient', {}],
+  ['cilindro grande', { type: 'cylinder', radius: 100 }, 'waves', { size: 180, rotation: 25 }],
+  ['caja redondeada', { type: 'box', width: 150, depth: 100, cornerRadius: 20 }, 'rings', { size: 90, invert: true }],
+  ['caja esquinas vivas', { type: 'box', width: 80, depth: 60, cornerRadius: 0 }, 'cross', { size: 70, offsetX: 10, levels: 2 }],
+  ['cilindro diminuto', { type: 'cylinder', radius: 8 }, 'blobs', {}],
+];
+for (const [name, shape, kind, cap] of lithoCases) {
+  const params = baseParams({ shape, bulbRadius: 10, parts: { ...DEFAULT_PARTS, cap: { mode: 'litho', ...cap } } });
+  const t0 = performance.now();
+  const { tris } = buildLithoCap(params, makeImage(kind), {});
+  const ms = performance.now() - t0;
+  const r = checkManifold(tris);
+  let hMax = 0;
+  for (let i = 2; i < tris.length; i += 3) hMax = Math.max(hMax, tris[i]);
+  const expected = capThickness(params) + DEFAULT_PARTS.lipLength;
+  const ok = r.bad === 0 && r.pinch === 0 && r.vol > 0 && Math.abs(hMax - expected) < 1e-3;
+  if (!ok) failed++;
+  console.log(`${ok ? 'OK ' : 'ERR'} litofanía ${name}: ${tris.length / 9} triángulos, vol=${(r.vol / 1000).toFixed(2)} cm³, ` +
+    `aristas abiertas=${r.bad}, pellizcos=${r.pinch}, altura=${hMax.toFixed(2)} mm, ${ms.toFixed(0)} ms`);
 }
 
 // Batería aleatoria (semilla fija) para cazar casos límite
