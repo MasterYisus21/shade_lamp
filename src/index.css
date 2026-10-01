@@ -368,3 +368,12 @@ input[type="file"] {
   margin-bottom: 8px;
   color: var(--text-main);
 }
+
+.part-toggles {
+  display: flex;
+  gap: 4px;
+}
+
+.btn-ghost:not(.active) {
+  color: var(--text-muted);
+}

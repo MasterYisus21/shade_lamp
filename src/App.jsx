@@ -101,6 +101,8 @@ function App() {
   // Vista previa y exportación
   const [showWall, setShowWall] = useState(true);
   const [exploded, setExploded] = useState(false);
+  const [visibleParts, setVisibleParts] = useState({ shade: true, base: true, cap: true, post: true });
+  const togglePart = (kind) => setVisibleParts((v) => ({ ...v, [kind]: !v[kind] }));
   const [preview, setPreview] = useState(null);
   const [previewError, setPreviewError] = useState(null);
   const [exportQuality, setExportQuality] = useState('high');
@@ -416,6 +418,15 @@ function App() {
             {showWall ? 'Ocultar luz proyectada' : 'Mostrar luz proyectada'}
           </button>
           {partsEnabled && (
+            <div className="part-toggles">
+              {[['shade', 'Pantalla'], ['cap', 'Tapa'], ['base', 'Base'], ['post', 'Poste']].map(([kind, label]) => (
+                <button key={kind} className={`btn btn-small btn-ghost${visibleParts[kind] ? ' active' : ''}`} onClick={() => togglePart(kind)}>
+                  {visibleParts[kind] ? <Eye size={14} /> : <EyeOff size={14} />} {label}
+                </button>
+              ))}
+            </div>
+          )}
+          {partsEnabled && (
             <button className="btn btn-small btn-ghost" onClick={() => setExploded((v) => !v)}>
               {exploded ? 'Vista ensamblada' : 'Vista separada'}
             </button>
@@ -443,6 +454,7 @@ function App() {
           distance={effDistance}
           gap={gapCm}
           exploded={partsEnabled && exploded}
+          visible={partsEnabled ? visibleParts : { ...visibleParts, shade: true }}
           height={height}
           bulbRadius={effBulbRadius}
           sceneSize={sceneSize}

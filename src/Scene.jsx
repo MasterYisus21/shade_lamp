@@ -92,6 +92,7 @@ export default function Scene({
   image,
   imgOffsetX, imgOffsetY, imgScaleX, imgScaleY, imgRotation, imgFlipX, imgFlipY,
   distance, gap = 0, height, bulbRadius, sceneSize, exploded,
+  visible = { shade: true, base: true, cap: true, post: true },
   bgColor, lightFillColor,
 }) {
   const lampGeo = useTrisGeometry(lampTris);
@@ -125,14 +126,14 @@ export default function Scene({
       </mesh>
 
       {/* Pantalla: la misma malla que se exporta (en calidad borrador) */}
-      {lampGeo && (
+      {lampGeo && visible.shade && (
         <mesh geometry={lampGeo} scale={0.1} position={[0, 0, -ex]}>
           <meshStandardMaterial color="#c9bfdc" roughness={0.6} metalness={0.05} />
         </mesh>
       )}
 
       {/* Base, tapa y poste (mismas mallas que se exportan) */}
-      {[['base', baseGeo], ['cap', capGeo], ['post', postGeo]].map(([kind, geo]) => geo && (
+      {[['base', baseGeo], ['cap', capGeo], ['post', postGeo]].map(([kind, geo]) => geo && visible[kind] && (
         <mesh key={kind} geometry={geo} scale={0.1} position={[0, 0, PART_OFFSET[kind]]}>
           <meshStandardMaterial color={PART_COLORS[kind]} roughness={0.6} metalness={0.05} />
         </mesh>
