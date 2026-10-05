@@ -15,7 +15,7 @@ import { createPreviewEngine, exportStl, exportPartStl } from './engine/client';
 import { loadImageLuminance, defaultImage, defaultCapImage } from './engine/image';
 import {
   PROJECT_EXT, canPickFiles, sanitizeSettings, serializeProject, parseProject, pickSaveTarget, writeToHandle,
-  pickProjectFile, projectBaseName, isAbort, autosavePut, autosaveLoad,
+  pickProjectFile, projectBaseName, isAbort, autosavePut, autosaveLoad, safeName,
 } from './engine/project';
 import { QUALITY } from './core/engine';
 import { DEFAULT_PARTS, DEFAULT_CAP, capThickness as capTotalThickness } from './core/parts';
@@ -55,22 +55,59 @@ function downloadBlob(blob, name) {
 }
 
 const round1 = (v) => Math.round(v * 10) / 10;
+// Tamaño de la imagen en la pared (cm), mismo rango que los campos; con la
+// proporción bloqueada, una imagen muy alargada no debe salirse de él
+const clampScale = (v) => Math.min(150, Math.max(1, round1(v)));
 
 // Por debajo de esta distancia (mm) el bombillo marca un punto brillante en la litofanía
 const LITHO_MIN_GAP = 15;
 
 const stlBlob = (buffer) => new Blob([buffer], { type: 'model/stl' });
 
-// Valores permitidos de los ajustes de texto al abrir un proyecto
-const SETTING_CHOICES = {
-  shapeType: ['cylinder', 'box'],
-  supportType: BRIDGES,
-  nozzle: Object.keys(NOZZLES),
-  cap: { mode: ['plain', 'litho'] },
-  wallTone: Object.keys(WALL_COLORS),
-  lightColor: Object.keys(LIGHT_COLORS),
-  exportQuality: Object.keys(QUALITY),
-  exportTarget: ['all', ...PIECES],
+// Valores permitidos al abrir un proyecto: los mismos rangos que los campos de la
+// interfaz (un archivo ajeno no puede pedir medidas que cuelguen el navegador)
+const SETTING_RULES = {
+  bulbRadius: { min: 0.1, max: 15 },
+  distance: { min: 1, max: 31 },
+  shapeType: { oneOf: ['cylinder', 'box'] },
+  radius: { min: 1, max: 10 },
+  boxWidth: { min: 2, max: 30 },
+  boxDepth: { min: 2, max: 30 },
+  boxCornerRadius: { min: 0, max: 15 },
+  height: { min: 2, max: 30 },
+  thickness: { min: 0.8, max: 10 },
+  rim: { min: 0.5, max: 20 },
+  imgOffsetX: { min: -70, max: 70 },
+  imgOffsetY: { min: -70, max: 70 },
+  imgScaleX: { min: 1, max: 150 },
+  imgScaleY: { min: 1, max: 150 },
+  imgRotation: { min: -180, max: 180 },
+  supportType: { oneOf: BRIDGES },
+  supportThickness: { min: 0.4, max: 3 },
+  supportSpacing: { min: 3, max: 60 },
+  nozzle: { oneOf: Object.keys(NOZZLES) },
+  baseThickness: { min: 1.5, max: 10 },
+  capThickness: { min: 1, max: 10 },
+  lipLength: { min: 2, max: 15 },
+  clearance: { min: 0, max: 0.6 },
+  postDiameter: { min: 4, max: 150 },
+  cableDiameter: { min: 1, max: 150 },
+  cap: {
+    mode: { oneOf: ['plain', 'litho'] },
+    size: { min: 5, max: 300 },
+    offsetX: { min: -100, max: 100 },
+    offsetY: { min: -100, max: 100 },
+    rotation: { min: -180, max: 180 },
+    levels: { min: 2, max: 6, int: true },
+    base: { min: 0.2, max: 2 },
+    step: { min: 0.1, max: 1 },
+    margin: { min: 0.5, max: 10 },
+    minFeature: { min: 0.2, max: 3 },
+  },
+  wallTone: { oneOf: Object.keys(WALL_COLORS) },
+  lightColor: { oneOf: Object.keys(LIGHT_COLORS) },
+  exportQuality: { oneOf: Object.keys(QUALITY) },
+  exportTarget: { oneOf: ['all', ...PIECES] },
 };
 
 // Marcas en localStorage (tutorial visto, aviso de memoria leído)
@@ -325,12 +362,15 @@ function App() {
   // Imagen
   const setWidthKeepingAspect = (w) => {
     setImgScaleX(w);
-    if (lockAspect) setImgScaleY(round1(w * imageAspect));
+    if (lockAspect) setImgScaleY(clampScale(w * imageAspect));
   };
   const setHeightKeepingAspect = (h) => {
     setImgScaleY(h);
-    if (lockAspect) setImgScaleX(round1(h / imageAspect));
+    if (lockAspect) setImgScaleX(clampScale(h / imageAspect));
   };
+
+  // Los errores de entrada (archivo muy grande, proyecto dañado…) explican qué pasó
+  const inputErrorText = (err, fallbackKey) => (err?.name === 'InputError' ? t(`limits.${err.code}`, err.vars) : t(fallbackKey));
 
   const handleImageFile = async (file, target = 'wall') => {
     if (imageLoading) return;
@@ -338,7 +378,7 @@ function App() {
     try {
       const data = await loadImageLuminance(file, (progress, stage) => setImageLoading({ progress, stage }));
       setImageLoading({ progress: 0.85, stage: 'lamp' });
-      const name = file.name.substring(0, file.name.lastIndexOf('.')) || file.name;
+      const name = safeName(file.name.substring(0, file.name.lastIndexOf('.')) || file.name) || t('files.image');
       if (target === 'cap') {
         setCapImageName(name);
         setCapImageData(data);
@@ -346,11 +386,11 @@ function App() {
       }
       setImageName(name);
       setImageData(data);
-      if (lockAspect) setImgScaleY(round1(imgScaleX * (data.height / data.width)));
+      if (lockAspect) setImgScaleY(clampScale(imgScaleX * (data.height / data.width)));
     } catch (err) {
       console.error('Error leyendo la imagen:', err);
       setImageLoading(null);
-      setToast({ kind: 'error', text: t('image.readError') });
+      setToast({ kind: 'error', text: inputErrorText(err, 'image.readError') });
     }
   };
 
@@ -443,7 +483,7 @@ function App() {
   // ───────────── Guardar y abrir proyectos ─────────────
   /** Aplica ajustes e imágenes; devuelve el estado para marcarlo como guardado. */
   const applyProject = ({ settings: saved, wall, cap: capEntry }) => {
-    const clean = sanitizeSettings(saved, defaults, SETTING_CHOICES);
+    const clean = sanitizeSettings(saved, defaults, SETTING_RULES);
     for (const [key, set] of Object.entries(setters)) set(clean[key]);
     const wallImage = wall?.image ?? defaultImage();
     const capImage = capEntry?.image ?? defaultCapImage();
@@ -474,7 +514,7 @@ function App() {
       else downloadBlob(blob, fileName);
       const savedName = handle ? handle.name : fileName;
       fileHandleRef.current = handle;
-      setProjectName(projectBaseName(savedName));
+      setProjectName(safeName(projectBaseName(savedName)));
       setSavedState(snapshot);
       setToast({ kind: 'ok', text: t('project.saved', { name: savedName }) });
     } catch (err) {
@@ -495,14 +535,14 @@ function App() {
       progress(0.85, 'lamp');
       const state = applyProject(project);
       fileHandleRef.current = handle;
-      setProjectName(projectBaseName(file.name));
+      setProjectName(safeName(projectBaseName(file.name)));
       setSavedState(state);
       setTab('image');
       setToast({ kind: 'ok', text: t('project.opened', { name: file.name }) });
     } catch (err) {
       console.error('Error abriendo el proyecto:', err);
       setImageLoading(null);
-      setToast({ kind: 'error', text: t('project.openError') });
+      setToast({ kind: 'error', text: inputErrorText(err, 'project.openError') });
     }
   };
 
@@ -540,7 +580,7 @@ function App() {
       if (saved) {
         const state = applyProject({ settings: saved.state.settings, wall: saved.wall, cap: saved.cap });
         storedImagesRef.current = { wall: state.wall, cap: state.cap };
-        setProjectName(saved.state.name ?? null);
+        setProjectName(safeName(saved.state.name));
         setSavedState(saved.state.dirty ? { json: null, wall: null, cap: null } : state);
         if (!wasDiscarded) setToast({ kind: 'ok', text: t('project.restored') });
       }

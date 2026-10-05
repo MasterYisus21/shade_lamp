@@ -265,5 +265,12 @@
     "title": "Apoyar el proyecto",
     "short": "Apoyar",
     "prompt": "Si te gusta o te es útil, recuerda apoyarme"
+  },
+  "limits": {
+    "imageTooLarge": "La imagen pesa más de {max} MB. Usa una versión más liviana.",
+    "imagePixels": "La imagen tiene más de {mp} megapíxeles. Redúcela antes de subirla (4096 px de lado es suficiente).",
+    "projectTooLarge": "El archivo pesa más de {max} MB; no parece un proyecto válido.",
+    "badProject": "El archivo no es un proyecto .shadelamp válido o está dañado.",
+    "newerProject": "Este proyecto se guardó con una versión más nueva de la app. Recarga la página para actualizarla."
   }
 }

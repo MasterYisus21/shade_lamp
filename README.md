@@ -54,6 +54,16 @@ La carpeta `dist/` es un sitio estático con rutas relativas: se puede subir tal
 cual a GitHub Pages, Netlify, Cloudflare Pages o cualquier hosting, también en
 una subcarpeta. Todo el cálculo ocurre en el navegador; no hace falta servidor.
 
+**Seguridad.** El build añade una política de seguridad de contenido (CSP)
+como `<meta>`, así la página solo carga código, estilos y fuentes de su propio
+dominio y no puede enviar datos a terceros. También genera `dist/_headers`
+(Netlify, Cloudflare Pages) con cabeceras que una `<meta>` no puede poner, como
+la protección contra que otro sitio la incruste. La política está en
+`vite.config.js`: si añades algo externo (analítica, otra fuente…), agrégalo
+ahí. Los archivos que abre el usuario se validan: imágenes de hasta 50 MB y 100
+megapíxeles, proyectos de hasta 100 MB, ajustes limitados a los rangos de la
+interfaz y nombres sin rutas ni caracteres reservados.
+
 Para mostrar el botón «Apoyar» (en el visor y tras cada exportación), pon tu
 enlace de donaciones en `DONATE_URL` de `src/config.js`.
 

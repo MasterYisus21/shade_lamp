@@ -2,11 +2,14 @@
 // autoguardado en IndexedDB para recuperar el diseño si el navegador recarga la
 // pestaña (p. ej. Chrome la descarta en segundo plano para liberar memoria).
 
-import { loadImageLuminance } from './image';
+import { loadImageLuminance, InputError, MAX_SIDE } from './image';
 
 export const PROJECT_EXT = '.shadelamp';
 const APP_ID = 'shade_lamp';
 const VERSION = 1;
+// Un proyecto con dos imágenes de 4096 px rara vez pasa de unos pocos MB
+export const MAX_PROJECT_MB = 100;
+const MAX_NAME = 80;
 
 const FILE_TYPES = [{ description: 'Shade Lamp', accept: { 'application/json': [PROJECT_EXT] } }];
 
@@ -18,18 +21,40 @@ export const canPickFiles = typeof window !== 'undefined' && 'showSaveFilePicker
 /**
  * Copia de `saved` con solo valores válidos; lo que falte o no sirva se toma de
  * `defaults` (mismo orden de claves, así JSON.stringify sirve para comparar).
- * @param {object} choices valores permitidos de los ajustes de texto
+ * Un archivo puede venir de cualquiera: los números se limitan a los mismos
+ * rangos que la interfaz para que no se pueda pedir una pieza gigante que cuelgue
+ * el navegador.
+ * @param {object} rules por clave: { min, max, int } para números, { oneOf } para
+ *   textos y un objeto de reglas para los ajustes anidados
  */
-export function sanitizeSettings(saved, defaults, choices = {}) {
-  const src = saved && typeof saved === 'object' ? saved : {};
-  const pick = (value, def, allowed) => {
-    if (typeof def === 'number') return Number.isFinite(value) ? value : def;
+export function sanitizeSettings(saved, defaults, rules = {}) {
+  const src = saved && typeof saved === 'object' && !Array.isArray(saved) ? saved : {};
+  const pick = (value, def, rule = {}) => {
+    if (typeof def === 'number') {
+      if (!Number.isFinite(value)) return def;
+      const v = rule.int ? Math.round(value) : value;
+      return Math.min(rule.max ?? Infinity, Math.max(rule.min ?? -Infinity, v));
+    }
     if (typeof def === 'boolean') return typeof value === 'boolean' ? value : def;
-    if (typeof def === 'string') return typeof value === 'string' && (!allowed || allowed.includes(value)) ? value : def;
-    if (def && typeof def === 'object') return sanitizeSettings(value, def, allowed);
+    if (typeof def === 'string') return typeof value === 'string' && (!rule.oneOf || rule.oneOf.includes(value)) ? value : def;
+    if (def && typeof def === 'object') return sanitizeSettings(value, def, rule);
     return def;
   };
-  return Object.fromEntries(Object.entries(defaults).map(([key, def]) => [key, pick(src[key], def, choices[key])]));
+  return Object.fromEntries(Object.entries(defaults).map(([key, def]) => [key, pick(src[key], def, rules[key])]));
+}
+
+/**
+ * Nombre apto para archivos: sin rutas («../»), caracteres reservados ni de
+ * control, que acabarían en los nombres del STL y dentro del ZIP.
+ */
+export function safeName(name) {
+  const clean = String(name ?? '')
+    .normalize('NFC')
+    // eslint-disable-next-line no-control-regex
+    .replace(/[\u0000-\u001f\u007f<>:"/\\|?*]+/g, '_')
+    .replace(/^[\s._]+|[\s.]+$/g, '')
+    .slice(0, MAX_NAME);
+  return clean || null;
 }
 
 // ───────────── Imágenes ─────────────
@@ -61,9 +86,20 @@ const blobToDataUrl = (blob) => new Promise((resolve, reject) => {
   reader.readAsDataURL(blob);
 });
 
+const PNG_PREFIX = 'data:image/png;base64,';
+
+/** Solo PNG en base64: se decodifica aquí (sin fetch) y se carga como cualquier imagen. */
 async function pngToImage(dataUrl, onProgress) {
-  const blob = await (await fetch(dataUrl)).blob();
-  return loadImageLuminance(new File([blob], 'image.png', { type: 'image/png' }), onProgress);
+  if (!dataUrl.startsWith(PNG_PREFIX)) throw new InputError('badProject');
+  let binary;
+  try {
+    binary = atob(dataUrl.slice(PNG_PREFIX.length));
+  } catch {
+    throw new InputError('badProject');
+  }
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+  return loadImageLuminance(new File([bytes], 'image.png', { type: 'image/png' }), onProgress);
 }
 
 // ───────────── Archivo .shadelamp ─────────────
@@ -90,12 +126,19 @@ export async function serializeProject({ settings, wall, cap }) {
  * @param {(progress: number) => void} [onProgress] 0..0.85
  */
 export async function parseProject(file, onProgress = () => {}) {
-  const data = JSON.parse(await file.text());
-  if (!data || data.app !== APP_ID || typeof data.settings !== 'object') throw new Error('not a project');
+  if (file.size > MAX_PROJECT_MB * 1e6) throw new InputError('projectTooLarge', { max: MAX_PROJECT_MB });
+  let data;
+  try {
+    data = JSON.parse(await file.text());
+  } catch {
+    throw new InputError('badProject');
+  }
+  if (!data || data.app !== APP_ID || !data.settings || typeof data.settings !== 'object') throw new InputError('badProject');
+  if (Number(data.version) > VERSION) throw new InputError('newerProject');
   const unpack = async (entry, from, to) => {
-    if (!entry || typeof entry.png !== 'string' || !entry.png.startsWith('data:image/')) return null;
+    if (!entry || typeof entry.png !== 'string') return null;
     const image = await pngToImage(entry.png, (p) => onProgress(from + (to - from) * (p / 0.8)));
-    return { name: String(entry.name || ''), image };
+    return { name: safeName(entry.name), image };
   };
   onProgress(0.05);
   const wall = await unpack(data.images?.wall, 0.05, 0.45);
@@ -182,7 +225,10 @@ export async function autosaveLoad() {
     const [state, wall, cap] = await Promise.all(['state', 'wall', 'cap'].map((key) => run('readonly', (store) => store.get(key))));
     const valid = (entry) => {
       const img = entry && entry.image;
-      return img && img.lum instanceof Uint8Array && img.lum.length === img.width * img.height ? entry : null;
+      const ok = img && img.lum instanceof Uint8Array && Number.isInteger(img.width) && Number.isInteger(img.height)
+        && img.width > 0 && img.height > 0 && img.width <= MAX_SIDE && img.height <= MAX_SIDE
+        && img.lum.length === img.width * img.height;
+      return ok ? { name: safeName(entry.name), image: img } : null;
     };
     return state && state.settings ? { state, wall: valid(wall), cap: valid(cap) } : null;
   } catch (err) {

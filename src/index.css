@@ -19,7 +19,7 @@
   --radius: 10px;
   --radius-sm: 7px;
   --shadow: 0 10px 30px rgba(0, 0, 0, 0.35);
-  --font: 'Inter', system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --font: 'Inter Variable', 'Inter', system-ui, -apple-system, 'Segoe UI', sans-serif;
   color-scheme: dark;
 }
 

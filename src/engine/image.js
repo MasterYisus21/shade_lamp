@@ -1,8 +1,21 @@
 // Carga de imágenes a luminancia (0..255). Lo transparente cuenta como blanco,
 // así el resultado no depende del color de la pared.
 
-const MAX_SIDE = 4096;
+export const MAX_SIDE = 4096;
 const CHUNK = 1 << 20; // píxeles convertidos antes de ceder el hilo a la interfaz
+// Límites de entrada: evitan que una imagen enorme agote la memoria de la pestaña
+export const MAX_IMAGE_MB = 50;
+const MAX_PIXELS = 100e6; // ~100 megapíxeles (el navegador la descomprime entera antes de reducirla)
+
+/** Error de entrada con una clave de traducción (limits.*) y sus valores. */
+export class InputError extends Error {
+  constructor(code, vars = {}) {
+    super(code);
+    this.name = 'InputError';
+    this.code = code;
+    this.vars = vars;
+  }
+}
 
 /**
  * Cede el hilo principal para que la interfaz pinte (barra de progreso). El
@@ -28,6 +41,7 @@ function decode(src) {
  *   etapa ('read' | 'raster' | 'prepare' | 'gray', claves de loading.* en i18n)
  */
 export async function loadImageLuminance(file, onProgress = () => {}) {
+  if (file.size > MAX_IMAGE_MB * 1e6) throw new InputError('imageTooLarge', { max: MAX_IMAGE_MB });
   const isSvg = file.type === 'image/svg+xml' || /\.svg$/i.test(file.name);
   const url = URL.createObjectURL(file);
   try {
@@ -37,6 +51,8 @@ export async function loadImageLuminance(file, onProgress = () => {}) {
 
     let w = img.naturalWidth || img.width || 1024;
     let h = img.naturalHeight || img.height || 1024;
+    // Los SVG se rasterizan a MAX_SIDE, su tamaño declarado no importa
+    if (!isSvg && w * h > MAX_PIXELS) throw new InputError('imagePixels', { mp: Math.round(MAX_PIXELS / 1e6) });
     // Los SVG se rasterizan al máximo; los mapas de bits solo se reducen si son enormes.
     const scale = isSvg ? MAX_SIDE / Math.max(w, h) : Math.min(1, MAX_SIDE / Math.max(w, h));
     w = Math.max(1, Math.round(w * scale));
