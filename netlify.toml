@@ -1,0 +1,10 @@
+# Despliegue en Netlify. Las cabeceras de seguridad las genera el build en
+# dist/_headers (ver vite.config.js), Netlify las aplica automáticamente.
+
+[build]
+  command = "npm run build"
+  publish = "dist"
+
+[build.environment]
+  # Vite 8 necesita Node 20.19+ o 22.12+
+  NODE_VERSION = "22"

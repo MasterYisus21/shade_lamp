@@ -39,8 +39,13 @@ function securityHeaders() {
         'Referrer-Policy': 'strict-origin-when-cross-origin',
         'Permissions-Policy': 'camera=(), microphone=(), geolocation=(), payment=(), usb=()',
         'Cross-Origin-Opener-Policy': 'same-origin',
+        // Solo por HTTPS durante un año (Netlify y Cloudflare dan el certificado)
+        'Strict-Transport-Security': 'max-age=31536000',
       }
-      const source = `/*\n${Object.entries(headers).map(([k, v]) => `  ${k}: ${v}`).join('\n')}\n`
+      const block = (path, h) => `${path}\n${Object.entries(h).map(([k, v]) => `  ${k}: ${v}`).join('\n')}\n`
+      const source = block('/*', headers)
+        // Los archivos de assets/ llevan un hash en el nombre: se pueden guardar para siempre
+        + block('/assets/*', { 'Cache-Control': 'public, max-age=31536000, immutable' })
       this.emitFile({ type: 'asset', fileName: '_headers', source })
     },
   }
