@@ -28,7 +28,8 @@
     "shade": "shade",
     "cap": "cap",
     "base": "base",
-    "post": "post"
+    "post": "post",
+    "image": "image"
   },
   "quality": {
     "draft": "Draft",
@@ -146,7 +147,8 @@
     "raster": "Rasterizing the SVG",
     "prepare": "Preparing the image",
     "gray": "Converting to grayscale",
-    "lamp": "Computing the lamp"
+    "lamp": "Computing the lamp",
+    "project": "Reading the project"
   },
   "viewer": {
     "show": "Show {part}",
@@ -185,5 +187,83 @@
     "minFeatureHint": "Smooths the image and removes details smaller than this (≈ 2 × nozzle).",
     "printNote": "Total thickness {total} mm. Print it lying flat, flat face on the bed, with a layer height that divides {step} mm (e.g. 0.2).",
     "hotspot": "The bulb is {gap} mm from the cap: the center will look brighter. Aim for at least {min} mm (move the bulb toward the wall or make the shade longer)."
+  },
+  "project": {
+    "untitled": "Untitled project",
+    "unsaved": "There are changes not saved to a file",
+    "upToDate": "All saved",
+    "new": "New project",
+    "open": "Open project",
+    "openTitle": "Open project (Ctrl+O)",
+    "save": "Save",
+    "saveTitle": "Save the project to a .shadelamp file (Ctrl+S · Ctrl+Shift+S to save as)",
+    "saved": "Project saved: {name}",
+    "saveError": "Could not save the project",
+    "opening": "Opening the project",
+    "opened": "Project opened: {name}",
+    "openError": "Could not open the file. Is it a .shadelamp project?",
+    "confirmDiscard": "There are changes not saved to a file. Continue and discard them?",
+    "restored": "Your last design was restored (saved automatically in this browser)."
+  },
+  "notice": {
+    "ok": "Got it",
+    "memory": {
+      "title": "Save your project often",
+      "text": "This app uses a lot of memory (with large images it can exceed 3–4 GB). If you leave the tab in the background, the browser may reload it to free memory. Your design is saved automatically in this browser, but the safest option is to use “Save”."
+    },
+    "discarded": {
+      "title": "The browser reloaded this tab",
+      "text": "It was closed in the background to free memory. Your design was restored from the autosave; to not depend on it, use “Save” and keep the .shadelamp file."
+    }
+  },
+  "tour": {
+    "open": "Show the tutorial",
+    "skip": "Close the tutorial",
+    "later": "Not now",
+    "start": "Start",
+    "next": "Next",
+    "back": "Back",
+    "finish": "Done",
+    "count": "Step {n} of {total}",
+    "steps": {
+      "welcome": {
+        "title": "Welcome to Shadow Lamp",
+        "text": "Here you design a lamp shade to 3D print. It has holes calculated so that, when the bulb is on, the light draws your image on the wall. Here are the basics in one minute."
+      },
+      "image": {
+        "title": "Choose your image",
+        "text": "Upload a black and white drawing (PNG, JPG or SVG) or drag it here. Simple, large shapes like a logo or a silhouette work best. You can start with the sample image."
+      },
+      "interpretation": {
+        "title": "Light or shadow?",
+        "text": "Decide what happens to the black parts of your image: “Light” cuts them out as holes (they light up on the wall) and “Shadow” keeps them covered with material."
+      },
+      "viewer": {
+        "title": "See the result",
+        "text": "In the 3D view, drag to rotate and use the mouse wheel to zoom. Turn on “Wall light” to see the image projected as it will look with the lamp on."
+      },
+      "tabs": {
+        "title": "Adjust the lamp",
+        "text": "In “Lamp” you change the shape, the size and where the bulb goes. In “Bridges” you hold the parts that would fall out (like the center of an “O”). In “Parts” you generate the base, cap and post to assemble it."
+      },
+      "export": {
+        "title": "Download to print",
+        "text": "Choose which parts to export and the quality, and download the STL files. Open them in your 3D printing software (Cura, PrusaSlicer, Bambu Studio…)."
+      },
+      "project": {
+        "title": "Save your project",
+        "text": "“Save” creates a .shadelamp file with your whole design, images included; “Open” brings it back whenever you want. The browser may reload the tab if it stays in the background, so save often (Ctrl+S)."
+      },
+      "done": {
+        "title": "Ready to start!",
+        "text": "You can see it again at any time with the “Tutorial” button at the bottom right of the 3D view."
+      }
+    },
+    "short": "Tutorial"
+  },
+  "donate": {
+    "title": "Support the project",
+    "short": "Support",
+    "prompt": "If you like it or find it useful, remember to support me"
   }
 }

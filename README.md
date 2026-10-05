@@ -22,6 +22,11 @@ proyecta, calculada a partir de esa misma geometría.
   así se imprime acostada y sin soportes; un aro con el labio le da rigidez.
 - **Cálculo en paralelo:** la vista previa se calcula en un Web Worker y la
   exportación reparte el trabajo entre los núcleos del procesador.
+- **Proyectos:** «Guardar» crea un archivo `.shadelamp` (JSON con los ajustes y
+  las imágenes en PNG, sin pérdida) y «Abrir» lo carga. En Chrome y Edge, tras
+  la primera vez, Ctrl+S guarda sobre el mismo archivo. Además el diseño se
+  autoguarda en el navegador (IndexedDB) y se recupera si la pestaña se recarga.
+- **Tutorial** guiado la primera vez (y con el botón «Tutorial» del visor).
 
 ## Uso
 
@@ -38,6 +43,19 @@ configuraciones aleatorias:
 ```bash
 node scripts/check-mesh.mjs medium 200
 ```
+
+## Publicar
+
+```bash
+npm run build
+```
+
+La carpeta `dist/` es un sitio estático con rutas relativas: se puede subir tal
+cual a GitHub Pages, Netlify, Cloudflare Pages o cualquier hosting, también en
+una subcarpeta. Todo el cálculo ocurre en el navegador; no hace falta servidor.
+
+Para mostrar el botón «Apoyar» (en el visor y tras cada exportación), pon tu
+enlace de donaciones en `DONATE_URL` de `src/config.js`.
 
 ## Idiomas
 
@@ -58,7 +76,7 @@ elección y, la primera vez, usa el idioma del navegador si está disponible.
 | Carpeta | Contenido |
 | --- | --- |
 | `src/core/` | Motor geométrico sin dependencias del navegador: perfil de la forma, campo sólido/hueco, mallado, piezas y STL. |
-| `src/engine/` | Workers, carga de imágenes y exportación en paralelo. |
+| `src/engine/` | Workers, carga de imágenes, exportación en paralelo y proyectos (archivo y autoguardado). |
 | `src/components/` | Componentes de la interfaz. |
 | `src/i18n/` | Traducciones (un JSON por idioma en `locales/`). |
 | `src/Scene.jsx` | Visor 3D (react-three-fiber). |

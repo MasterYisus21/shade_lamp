@@ -1,20 +1,27 @@
-import React, { useState, useEffect, useMemo, useRef } from 'react';
+import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import {
   Image as ImageIcon, Lamp, Grid3x3, Puzzle, Download, Eye, EyeOff, LoaderCircle, Cylinder, Box,
   FlipHorizontal2, FlipVertical2, Lock, Unlock, Sun, Moon, Focus, Expand, Shrink, Lightbulb, Check,
-  TriangleAlert, Info, X, Move, Languages, Contrast, Layers,
+  TriangleAlert, Info, X, Move, Languages, Contrast, Layers, FilePlus, FolderOpen, Save, FileText,
+  Heart, CircleHelp, MemoryStick,
 } from 'lucide-react';
 import Scene from './Scene';
-import { LIGHT_COLORS } from './theme';
+import { LIGHT_COLORS, WALL_COLORS } from './theme';
 import { Field, Segmented, Switch, SelectField, Card, IconToggle } from './components/ui';
 import ImageDrop from './components/ImageDrop';
 import CapGlow from './components/CapGlow';
+import Tour from './components/Tour';
 import { createPreviewEngine, exportStl, exportPartStl } from './engine/client';
 import { loadImageLuminance, defaultImage, defaultCapImage } from './engine/image';
+import {
+  PROJECT_EXT, canPickFiles, sanitizeSettings, serializeProject, parseProject, pickSaveTarget, writeToHandle,
+  pickProjectFile, projectBaseName, isAbort, autosavePut, autosaveLoad,
+} from './engine/project';
 import { QUALITY } from './core/engine';
 import { DEFAULT_PARTS, DEFAULT_CAP, capThickness as capTotalThickness } from './core/parts';
 import { zipFiles } from './engine/zip';
 import { useI18n, setLanguage, LANGUAGES } from './i18n';
+import { DONATE_URL } from './config';
 import './index.css';
 
 // Holgura del encastre según el tipo de impresión (mm)
@@ -53,6 +60,38 @@ const round1 = (v) => Math.round(v * 10) / 10;
 const LITHO_MIN_GAP = 15;
 
 const stlBlob = (buffer) => new Blob([buffer], { type: 'model/stl' });
+
+// Valores permitidos de los ajustes de texto al abrir un proyecto
+const SETTING_CHOICES = {
+  shapeType: ['cylinder', 'box'],
+  supportType: BRIDGES,
+  nozzle: Object.keys(NOZZLES),
+  cap: { mode: ['plain', 'litho'] },
+  wallTone: Object.keys(WALL_COLORS),
+  lightColor: Object.keys(LIGHT_COLORS),
+  exportQuality: Object.keys(QUALITY),
+  exportTarget: ['all', ...PIECES],
+};
+
+// Marcas en localStorage (tutorial visto, aviso de memoria leído)
+const FLAGS = { tour: 'shade_lamp.tourDone', memory: 'shade_lamp.memoryNoticeSeen' };
+const readFlag = (key) => {
+  try {
+    return localStorage.getItem(key) === '1';
+  } catch {
+    return false;
+  }
+};
+const writeFlag = (key) => {
+  try {
+    localStorage.setItem(key, '1');
+  } catch {
+    // Sin almacenamiento: se volverá a mostrar la próxima vez
+  }
+};
+
+// Chrome marca así la página cuando descartó la pestaña para liberar memoria y la recargó
+const wasDiscarded = typeof document !== 'undefined' && document.wasDiscarded === true;
 
 function App() {
   const { t, lang, locale } = useI18n();
@@ -126,6 +165,45 @@ function App() {
   const [exportTarget, setExportTarget] = useState('all'); // 'all' o una pieza
   const [exporting, setExporting] = useState(null); // { progress }
   const [toast, setToast] = useState(null);
+  const [supportPrompt, setSupportPrompt] = useState(false); // letrero de apoyo tras exportar
+
+  // ───────────── Proyecto ─────────────
+  // Todo lo que se guarda en el archivo y en el autoguardado (las imágenes van aparte)
+  const settings = {
+    bulbRadius, distance, shapeType, radius, boxWidth, boxDepth, boxCornerRadius, height, thickness, rim,
+    imgOffsetX, imgOffsetY, imgScaleX, imgScaleY, lockAspect, imgRotation, imgFlipX, imgFlipY, invertShadow,
+    supportType, supportThickness, supportSpacing,
+    nozzle, partsEnabled, baseThickness, capThickness, lipLength, clearance, postDiameter, cableDiameter, cap,
+    wallTone, lightColor, exportQuality, exportTarget,
+  };
+  const setters = {
+    bulbRadius: setBulbRadius, distance: setDistance, shapeType: setShapeType, radius: setRadius,
+    boxWidth: setBoxWidth, boxDepth: setBoxDepth, boxCornerRadius: setBoxCornerRadius, height: setHeight,
+    thickness: setThickness, rim: setRim,
+    imgOffsetX: setImgOffsetX, imgOffsetY: setImgOffsetY, imgScaleX: setImgScaleX, imgScaleY: setImgScaleY,
+    lockAspect: setLockAspect, imgRotation: setImgRotation, imgFlipX: setImgFlipX, imgFlipY: setImgFlipY,
+    invertShadow: setInvertShadow,
+    supportType: setSupportType, supportThickness: setSupportThickness, supportSpacing: setSupportSpacing,
+    nozzle: setNozzle, partsEnabled: setPartsEnabled, baseThickness: setBaseThickness, capThickness: setCapThickness,
+    lipLength: setLipLength, clearance: setClearance, postDiameter: setPostDiameter, cableDiameter: setCableDiameter,
+    cap: setCap,
+    wallTone: setWallTone, lightColor: setLightColor, exportQuality: setExportQuality, exportTarget: setExportTarget,
+  };
+  const settingsJson = JSON.stringify(settings);
+  const [defaults] = useState(settings); // valores iniciales, para «Nuevo proyecto»
+
+  const [projectName, setProjectName] = useState(null);
+  const fileHandleRef = useRef(null); // archivo abierto o guardado (selector nativo)
+  const openInputRef = useRef(null);
+  const [saving, setSaving] = useState(false);
+  // Último estado guardado en archivo; si el actual difiere, hay cambios sin guardar
+  const [savedState, setSavedState] = useState(() => ({ json: settingsJson, wall: imageData, cap: capImageData }));
+  const dirty = savedState.json !== settingsJson || savedState.wall !== imageData || savedState.cap !== capImageData;
+  const [restored, setRestored] = useState(false); // el autoguardado ya se leyó
+  const storedImagesRef = useRef({}); // imágenes ya escritas en el autoguardado
+
+  const [tourOpen, setTourOpen] = useState(() => !readFlag(FLAGS.tour));
+  const [notice, setNotice] = useState(() => (wasDiscarded ? 'discarded' : readFlag(FLAGS.memory) ? null : 'memory'));
 
   // Límites físicos
   const innerHalf = shapeType === 'cylinder' ? radius : Math.min(boxWidth, boxDepth) / 2;
@@ -233,6 +311,12 @@ function App() {
   }, [engineParams, imageData, capImageData, showWall]);
 
   useEffect(() => {
+    if (!supportPrompt) return undefined;
+    const timer = setTimeout(() => setSupportPrompt(false), 15000);
+    return () => clearTimeout(timer);
+  }, [supportPrompt]);
+
+  useEffect(() => {
     if (!toast) return undefined;
     const timer = setTimeout(() => setToast(null), 7000);
     return () => clearTimeout(timer);
@@ -294,6 +378,10 @@ function App() {
   const mb = (bytes) => (bytes / 1e6).toFixed(1);
 
   const partStl = (kind) => exportPartStl(engineParams, kind, capImageData);
+  // Tras una descarga es buen momento para invitar a apoyar el proyecto
+  const askSupport = () => {
+    if (DONATE_URL) setSupportPrompt(true);
+  };
 
   const handleExport = async () => {
     setExporting({ progress: 0 });
@@ -303,6 +391,7 @@ function App() {
         const name = partFile(target);
         downloadBlob(stlBlob(await partStl(target)), name);
         setToast({ kind: 'ok', text: t('export.donePart', { name }) });
+        askSupport();
         return;
       }
       // La pantalla ocupa casi todo el tiempo; las piezas, el resto de la barra
@@ -321,6 +410,7 @@ function App() {
             seconds: (shade.ms / 1000).toFixed(1),
           }) + coarsened,
         });
+        askSupport();
         return;
       }
       const files = [{ name: shadeFile(), data: shade.buffer }];
@@ -341,12 +431,175 @@ function App() {
           seconds: ((performance.now() - t0) / 1000).toFixed(1),
         }) + coarsened,
       });
+      askSupport();
     } catch (err) {
       console.error('Error generando STL:', err);
       setToast({ kind: 'error', text: t('export.error', { message: err.message }) });
     } finally {
       setExporting(null);
     }
+  };
+
+  // ───────────── Guardar y abrir proyectos ─────────────
+  /** Aplica ajustes e imágenes; devuelve el estado para marcarlo como guardado. */
+  const applyProject = ({ settings: saved, wall, cap: capEntry }) => {
+    const clean = sanitizeSettings(saved, defaults, SETTING_CHOICES);
+    for (const [key, set] of Object.entries(setters)) set(clean[key]);
+    const wallImage = wall?.image ?? defaultImage();
+    const capImage = capEntry?.image ?? defaultCapImage();
+    setImageName(wall ? wall.name || t('files.image') : null);
+    setImageData(wallImage);
+    setCapImageName(capEntry ? capEntry.name || t('files.image') : null);
+    setCapImageData(capImage);
+    return { json: JSON.stringify(clean), wall: wallImage, cap: capImage };
+  };
+
+  const busy = !!(imageLoading || exporting || saving);
+  const confirmDiscard = () => !dirty || window.confirm(t('project.confirmDiscard'));
+
+  const handleSave = async (saveAs = false) => {
+    if (busy) return;
+    const fileName = `${projectName || baseName}${PROJECT_EXT}`;
+    const snapshot = { json: settingsJson, wall: imageData, cap: capImageData };
+    try {
+      // Primero el selector: el navegador lo exige justo después del clic
+      const handle = await pickSaveTarget(saveAs ? null : fileHandleRef.current, fileName);
+      setSaving(true);
+      const blob = await serializeProject({
+        settings,
+        wall: imageName ? { name: imageName, image: imageData } : null,
+        cap: capImageName ? { name: capImageName, image: capImageData } : null,
+      });
+      if (handle) await writeToHandle(handle, blob);
+      else downloadBlob(blob, fileName);
+      const savedName = handle ? handle.name : fileName;
+      fileHandleRef.current = handle;
+      setProjectName(projectBaseName(savedName));
+      setSavedState(snapshot);
+      setToast({ kind: 'ok', text: t('project.saved', { name: savedName }) });
+    } catch (err) {
+      if (!isAbort(err)) {
+        console.error('Error guardando el proyecto:', err);
+        setToast({ kind: 'error', text: t('project.saveError') });
+      }
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const openProjectFile = async (file, handle = null) => {
+    const progress = (p, stage = 'project') => setImageLoading({ progress: p, stage, titleKey: 'project.opening' });
+    progress(0);
+    try {
+      const project = await parseProject(file, (p) => progress(p));
+      progress(0.85, 'lamp');
+      const state = applyProject(project);
+      fileHandleRef.current = handle;
+      setProjectName(projectBaseName(file.name));
+      setSavedState(state);
+      setTab('image');
+      setToast({ kind: 'ok', text: t('project.opened', { name: file.name }) });
+    } catch (err) {
+      console.error('Error abriendo el proyecto:', err);
+      setImageLoading(null);
+      setToast({ kind: 'error', text: t('project.openError') });
+    }
+  };
+
+  const handleOpen = async () => {
+    if (busy || !confirmDiscard()) return;
+    if (!canPickFiles) {
+      openInputRef.current?.click();
+      return;
+    }
+    try {
+      const { file, handle } = await pickProjectFile();
+      await openProjectFile(file, handle);
+    } catch (err) {
+      if (!isAbort(err)) {
+        console.error('Error abriendo el proyecto:', err);
+        setToast({ kind: 'error', text: t('project.openError') });
+      }
+    }
+  };
+
+  const handleNew = () => {
+    if (busy || !confirmDiscard()) return;
+    const state = applyProject({ settings: {}, wall: null, cap: null });
+    fileHandleRef.current = null;
+    setProjectName(null);
+    setSavedState(state);
+    setTab('image');
+  };
+
+  // Al abrir la app se recupera el autoguardado (p. ej. si el navegador recargó la pestaña)
+  useEffect(() => {
+    let cancelled = false;
+    autosaveLoad().then((saved) => {
+      if (cancelled) return;
+      if (saved) {
+        const state = applyProject({ settings: saved.state.settings, wall: saved.wall, cap: saved.cap });
+        storedImagesRef.current = { wall: state.wall, cap: state.cap };
+        setProjectName(saved.state.name ?? null);
+        setSavedState(saved.state.dirty ? { json: null, wall: null, cap: null } : state);
+        if (!wasDiscarded) setToast({ kind: 'ok', text: t('project.restored') });
+      }
+      setRestored(true);
+    });
+    return () => { cancelled = true; };
+    // Solo al iniciar
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    if (!restored) return undefined;
+    const timer = setTimeout(() => autosavePut('state', { settings: JSON.parse(settingsJson), name: projectName, dirty }), 400);
+    return () => clearTimeout(timer);
+  }, [restored, settingsJson, projectName, dirty]);
+
+  // Las imágenes se escriben solo cuando cambian (pueden pesar varios MB)
+  useEffect(() => {
+    if (!restored) return;
+    const stored = storedImagesRef.current;
+    if (stored.wall !== imageData) {
+      stored.wall = imageData;
+      autosavePut('wall', imageName ? { name: imageName, image: imageData } : null);
+    }
+    if (stored.cap !== capImageData) {
+      stored.cap = capImageData;
+      autosavePut('cap', capImageName ? { name: capImageName, image: capImageData } : null);
+    }
+  }, [restored, imageData, imageName, capImageData, capImageName]);
+
+  // Ctrl+S guarda (Ctrl+Mayús+S: guardar como) y Ctrl+O abre
+  const shortcutsRef = useRef(null);
+  useEffect(() => {
+    shortcutsRef.current = { save: handleSave, open: handleOpen };
+  });
+  useEffect(() => {
+    const onKey = (e) => {
+      if (!(e.ctrlKey || e.metaKey) || e.altKey) return;
+      const key = e.key.toLowerCase();
+      if (key === 's') {
+        e.preventDefault();
+        shortcutsRef.current?.save(e.shiftKey);
+      } else if (key === 'o') {
+        e.preventDefault();
+        shortcutsRef.current?.open();
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
+
+  const closeTour = useCallback(() => {
+    setTourOpen(false);
+    writeFlag(FLAGS.tour);
+  }, []);
+
+  const dismissNotice = () => {
+    setNotice(null);
+    writeFlag(FLAGS.memory);
   };
 
   const sceneSize = Math.max(height, shapeType === 'cylinder' ? radius : Math.max(boxWidth, boxDepth) / 2);
@@ -372,7 +625,47 @@ function App() {
           )}
         </header>
 
-        <nav className="tabs" role="tablist">
+        <div className="project" data-tour="project">
+          <div className="project-name" title={dirty ? t('project.unsaved') : t('project.upToDate')}>
+            <FileText size={14} />
+            <span>{projectName || t('project.untitled')}</span>
+            {dirty && <i className="dirty-dot" aria-label={t('project.unsaved')} />}
+          </div>
+          <button type="button" className="icon-btn" onClick={handleNew} disabled={busy} title={t('project.new')} aria-label={t('project.new')}>
+            <FilePlus size={15} />
+          </button>
+          <button type="button" className="icon-btn" onClick={handleOpen} disabled={busy} title={t('project.openTitle')} aria-label={t('project.open')}>
+            <FolderOpen size={15} />
+          </button>
+          <button type="button" className="btn btn-secondary" onClick={() => handleSave()} disabled={busy} title={t('project.saveTitle')}>
+            {saving ? <LoaderCircle size={14} className="spin" /> : <Save size={14} />}
+            {t('project.save')}
+          </button>
+          <input
+            ref={openInputRef}
+            type="file"
+            accept={`${PROJECT_EXT},.json,application/json`}
+            hidden
+            onChange={(e) => {
+              const file = e.target.files[0];
+              e.target.value = '';
+              if (file) openProjectFile(file);
+            }}
+          />
+        </div>
+
+        {notice && (
+          <div className="notice" role="status">
+            <MemoryStick size={16} />
+            <div>
+              <strong>{t(`notice.${notice}.title`)}</strong>
+              <p>{t(`notice.${notice}.text`)}</p>
+            </div>
+            <button type="button" onClick={dismissNotice} aria-label={t('notice.ok')} title={t('notice.ok')}><X size={14} /></button>
+          </div>
+        )}
+
+        <nav className="tabs" role="tablist" data-tour="tabs">
           {TABS.map((item) => (
             <button key={item.id} role="tab" aria-selected={tab === item.id} className={tab === item.id ? 'on' : ''} onClick={() => setTab(item.id)}>
               {item.icon}
@@ -384,7 +677,7 @@ function App() {
         <div className="panel-scroll">
           {tab === 'image' && (
             <>
-              <Card title={t('image.title')}>
+              <Card title={t('image.title')} tour="image">
                 <ImageDrop
                   image={imageData}
                   name={imageName}
@@ -395,7 +688,7 @@ function App() {
                 <p className="hint">{t('image.hint')}</p>
               </Card>
 
-              <Card title={t('interpretation.title')}>
+              <Card title={t('interpretation.title')} tour="interpretation">
                 <Segmented
                   label={t('interpretation.label')}
                   value={invertShadow ? 'shadow' : 'light'}
@@ -598,7 +891,7 @@ function App() {
         </div>
 
         {/* Exportación siempre visible */}
-        <footer className="export">
+        <footer className="export" data-tour="export">
           <div className="export-row">
             <select
               className="select export-target"
@@ -647,7 +940,7 @@ function App() {
               />
             ))}
           </div>
-          <div className="tool-group">
+          <div className="tool-group" data-tour="viewer-light">
             <IconToggle active={showWall} onClick={() => setShowWall((v) => !v)} icon={<Sun size={14} />} label={t('viewer.wallLight')} />
             <IconToggle
               active={dragImage}
@@ -706,6 +999,17 @@ function App() {
           )}
         </div>
 
+        <div className="corner-links">
+          <button type="button" className="corner-link" onClick={() => setTourOpen(true)} title={t('tour.open')}>
+            <CircleHelp size={14} />{t('tour.short')}
+          </button>
+          {DONATE_URL && (
+            <a className="corner-link donate" href={DONATE_URL} target="_blank" rel="noopener noreferrer" title={t('donate.title')}>
+              <Heart size={14} />{t('donate.short')}
+            </a>
+          )}
+        </div>
+
         <Scene
           lampTris={preview?.tris}
           parts={preview?.parts}
@@ -738,6 +1042,17 @@ function App() {
           } : null}
         />
 
+        {supportPrompt && (
+          <div className="support" role="status">
+            <Heart size={18} className="support-heart" />
+            <span>{t('donate.prompt')}</span>
+            <a className="btn btn-primary" href={DONATE_URL} target="_blank" rel="noopener noreferrer" onClick={() => setSupportPrompt(false)}>
+              {t('donate.short')}
+            </a>
+            <button type="button" onClick={() => setSupportPrompt(false)} aria-label={t('viewer.close')}><X size={14} /></button>
+          </div>
+        )}
+
         {toast && (
           <div className={`toast ${toast.kind}`} role="status">
             {toast.kind === 'ok' ? <Check size={16} /> : <TriangleAlert size={16} />}
@@ -751,7 +1066,7 @@ function App() {
         <div className="modal-backdrop">
           <div className="modal" role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(imageLoading.progress * 100)}>
             <LoaderCircle size={28} className="spin accent" />
-            <h2>{t('loading.title')}</h2>
+            <h2>{t(imageLoading.titleKey || 'loading.title')}</h2>
             <p>{t(`loading.${imageLoading.stage}`)}…</p>
             <div className="progress"><div style={{ width: `${Math.round(imageLoading.progress * 100)}%` }} /></div>
             <span className="progress-label">{Math.round(imageLoading.progress * 100)} %</span>
@@ -774,6 +1089,8 @@ function App() {
           </div>
         </div>
       )}
+
+      {tourOpen && <Tour onClose={closeTour} onTab={setTab} />}
     </div>
   );
 }

@@ -114,9 +114,9 @@ export function SelectField({ label, value, onChange, options }) {
   );
 }
 
-export function Card({ title, icon, action, children }) {
+export function Card({ title, icon, action, children, tour }) {
   return (
-    <section className="card">
+    <section className="card" data-tour={tour}>
       {(title || action) && (
         <header className="card-head">
           <h3>{icon}{title}</h3>

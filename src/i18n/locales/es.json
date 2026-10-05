@@ -28,7 +28,8 @@
     "shade": "pantalla",
     "cap": "tapa",
     "base": "base",
-    "post": "poste"
+    "post": "poste",
+    "image": "imagen"
   },
   "quality": {
     "draft": "Borrador",
@@ -146,7 +147,8 @@
     "raster": "Rasterizando el SVG",
     "prepare": "Preparando la imagen",
     "gray": "Convirtiendo a escala de grises",
-    "lamp": "Calculando la lámpara"
+    "lamp": "Calculando la lámpara",
+    "project": "Leyendo el proyecto"
   },
   "viewer": {
     "show": "Mostrar {part}",
@@ -185,5 +187,83 @@
     "minFeatureHint": "Suaviza la imagen y elimina detalles más pequeños que esto (≈ 2 × boquilla).",
     "printNote": "Grosor total {total} mm. Imprime acostada, con la cara plana sobre la cama, y usa una altura de capa que divida {step} mm (p. ej. 0.2).",
     "hotspot": "El bombillo queda a {gap} mm de la tapa: el centro se verá más brillante. Lo ideal es al menos {min} mm (acerca el bombillo a la pared o alarga la pantalla)."
+  },
+  "project": {
+    "untitled": "Proyecto sin título",
+    "unsaved": "Hay cambios sin guardar en un archivo",
+    "upToDate": "Todo guardado",
+    "new": "Nuevo proyecto",
+    "open": "Abrir proyecto",
+    "openTitle": "Abrir proyecto (Ctrl+O)",
+    "save": "Guardar",
+    "saveTitle": "Guardar el proyecto en un archivo .shadelamp (Ctrl+S · Ctrl+Mayús+S para guardar como)",
+    "saved": "Proyecto guardado: {name}",
+    "saveError": "No se pudo guardar el proyecto",
+    "opening": "Abriendo el proyecto",
+    "opened": "Proyecto abierto: {name}",
+    "openError": "No se pudo abrir el archivo. ¿Es un proyecto .shadelamp?",
+    "confirmDiscard": "Hay cambios sin guardar en un archivo. ¿Continuar y descartarlos?",
+    "restored": "Se recuperó tu último diseño (guardado automáticamente en este navegador)."
+  },
+  "notice": {
+    "ok": "Entendido",
+    "memory": {
+      "title": "Guarda tu proyecto a menudo",
+      "text": "Esta app usa mucha memoria (con imágenes grandes puede pasar de 3–4 GB). Si dejas la pestaña en segundo plano, el navegador puede recargarla para liberar memoria. Tu diseño se guarda solo en este navegador, pero lo más seguro es usar «Guardar»."
+    },
+    "discarded": {
+      "title": "El navegador recargó la pestaña",
+      "text": "Se cerró en segundo plano para liberar memoria. Recuperamos tu diseño del autoguardado; para no depender de él, usa «Guardar» y conserva el archivo .shadelamp."
+    }
+  },
+  "tour": {
+    "open": "Ver el tutorial",
+    "skip": "Cerrar el tutorial",
+    "later": "Ahora no",
+    "start": "Empezar",
+    "next": "Siguiente",
+    "back": "Atrás",
+    "finish": "Listo",
+    "count": "Paso {n} de {total}",
+    "steps": {
+      "welcome": {
+        "title": "Bienvenido a Lámpara de Sombras",
+        "text": "Aquí diseñas una pantalla de lámpara para imprimir en 3D. Tiene huecos calculados para que, al encender el bombillo, la luz dibuje tu imagen en la pared. Te mostramos lo básico en un minuto."
+      },
+      "image": {
+        "title": "Elige tu imagen",
+        "text": "Sube un dibujo en blanco y negro (PNG, JPG o SVG) o arrástralo aquí. Funcionan mejor las formas simples y grandes, como un logo o una silueta. Puedes empezar con la imagen de prueba."
+      },
+      "interpretation": {
+        "title": "¿Luz o sombra?",
+        "text": "Decide qué pasa con lo negro de tu imagen: «Luz» lo recorta como hueco (se ilumina en la pared) y «Sombra» lo deja tapado con material."
+      },
+      "viewer": {
+        "title": "Mira el resultado",
+        "text": "En la vista 3D arrastra para girar y usa la rueda del mouse para acercar. Activa «Luz en la pared» para ver la imagen proyectada tal como se verá con la lámpara encendida."
+      },
+      "tabs": {
+        "title": "Ajusta la lámpara",
+        "text": "En «Lámpara» cambias la forma, el tamaño y dónde va el bombillo. En «Puentes» sujetas las partes que quedarían sueltas (como el centro de una «O»). En «Piezas» generas la base, la tapa y el poste para armarla."
+      },
+      "export": {
+        "title": "Descarga para imprimir",
+        "text": "Elige qué piezas exportar y la calidad, y descarga los archivos STL. Ábrelos en tu programa de impresión 3D (Cura, PrusaSlicer, Bambu Studio…)."
+      },
+      "project": {
+        "title": "Guarda tu proyecto",
+        "text": "«Guardar» crea un archivo .shadelamp con todo tu diseño, imágenes incluidas; con «Abrir» lo recuperas cuando quieras. El navegador puede recargar la pestaña si queda en segundo plano, así que guarda a menudo (Ctrl+S)."
+      },
+      "done": {
+        "title": "¡Listo para empezar!",
+        "text": "Puedes volver a verlo cuando quieras con el botón «Tutorial», abajo a la derecha de la vista 3D."
+      }
+    },
+    "short": "Tutorial"
+  },
+  "donate": {
+    "title": "Apoyar el proyecto",
+    "short": "Apoyar",
+    "prompt": "Si te gusta o te es útil, recuerda apoyarme"
   }
 }
